@@ -21,6 +21,7 @@ package discovery
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -63,9 +64,22 @@ func NewMDNSDiscovery(h host.Host) (*MDNSDiscovery, error) {
 }
 
 // Close detiene el servicio mDNS y libera los recursos asociados.
-// Debe llamarse cuando el nodo se apaga (ver node.Close()).
+//
+// La librería zeroconf (usada internamente por go-libp2p para mDNS) envía
+// paquetes de "goodbye" a la red local al cerrarse, y puede bloquearse
+// esperando confirmaciones que quizás nunca llegan. Le damos 1 segundo:
+// si no terminó, lo abandonamos — los peers en la red se darán cuenta
+// por sí solos cuando dejen de recibir anuncios de este nodo.
 func (d *MDNSDiscovery) Close() error {
-	return d.service.Close()
+	done := make(chan error, 1)
+	go func() { done <- d.service.Close() }()
+
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(1 * time.Second):
+		return nil // timeout: lo abandonamos, no es crítico
+	}
 }
 
 // discoveryNotifee implementa la interfaz mdns.Notifee de go-libp2p.

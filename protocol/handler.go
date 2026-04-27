@@ -5,11 +5,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 )
+
+// streamDeadline es el tiempo máximo que le damos a cualquier operación de I/O
+// sobre un stream. Si un read o write no completa en este tiempo, el stream
+// devuelve un error de timeout y la goroutine se desbloquea.
+//
+// Esto es fundamental para el apagado limpio del nodo: sin deadline, un
+// scanner.Scan() bloqueante impediría que host.Close() termine a tiempo.
+const streamDeadline = 10 * time.Second
 
 // Handler gestiona toda la lógica de streams del protocolo /randomness/1.0.0.
 //
@@ -58,6 +67,13 @@ func (ph *Handler) handleStream(s network.Stream) {
 	// que simplemente espere datos que nunca van a llegar).
 	defer s.Close()
 
+	// Deadline global para toda la interacción de este stream.
+	// Si el peer tarda más de streamDeadline en enviarnos datos (o nosotros
+	// en responder), el stream se cierra automáticamente con un error de timeout.
+	// Esto evita que goroutines de handleStream queden bloqueadas indefinidamente
+	// cuando el nodo se está apagando o cuando un peer deja de responder.
+	s.SetDeadline(time.Now().Add(streamDeadline)) //nolint:errcheck
+
 	remotePeer := s.Conn().RemotePeer()
 
 	// bufio.Scanner lee línea por línea del stream.
@@ -91,6 +107,8 @@ func (ph *Handler) handleStream(s network.Stream) {
 	switch msg.Type {
 	case MessageTypePing:
 		ph.sendMessage(s, Message{Type: MessageTypePong, Payload: "hola de vuelta"})
+	case MessageTypeChat:
+		fmt.Printf("[chat] %s: %s\n", remotePeer.ShortString(), msg.Payload)
 	default:
 		fmt.Printf("[handler] tipo desconocido %q de %s\n", msg.Type, remotePeer.ShortString())
 	}
@@ -130,6 +148,11 @@ func (ph *Handler) Ping(ctx context.Context, peerID peer.ID) error {
 		return fmt.Errorf("abrir stream a %s: %w", peerID.ShortString(), err)
 	}
 	defer s.Close()
+
+	// Deadline para el round-trip completo (escribir Ping + leer Pong).
+	// Si el peer no responde en streamDeadline, el read del scanner devuelve
+	// un error y Ping() retorna en lugar de quedarse bloqueado para siempre.
+	s.SetDeadline(time.Now().Add(streamDeadline)) //nolint:errcheck
 
 	// Enviamos el Ping.
 	ph.sendMessage(s, Message{Type: MessageTypePing, Payload: "hola"})
