@@ -107,8 +107,6 @@ func (ph *Handler) handleStream(s network.Stream) {
 	switch msg.Type {
 	case MessageTypePing:
 		ph.sendMessage(s, Message{Type: MessageTypePong, Payload: "hola de vuelta"})
-	case MessageTypeChat:
-		fmt.Printf("[chat] %s: %s\n", remotePeer.ShortString(), msg.Payload)
 	default:
 		fmt.Printf("[handler] tipo desconocido %q de %s\n", msg.Type, remotePeer.ShortString())
 	}

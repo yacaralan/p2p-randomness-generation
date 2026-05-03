@@ -9,7 +9,6 @@ import "github.com/libp2p/go-libp2p/core/protocol"
 const ProtocolID = protocol.ID("/randomness/1.0.0")
 
 // MessageType identifica el tipo semántico de un mensaje.
-// En iteraciones futuras se agregarán: Commit, Reveal, VDFProof.
 type MessageType string
 
 const (
@@ -18,14 +17,36 @@ const (
 	MessageTypeChat = MessageType("CHAT")
 )
 
-// Message es la unidad de comunicación del protocolo.
-// Actualmente se serializa como JSON delimitado por '\n'.
-//
-// En la próxima iteración (integración de pubsub + protobuf), este struct
-// será reemplazado por tipos generados desde un .proto, que permiten
-// campos adicionales tipados (hash del commit, proof VDF, timestamp, etc.)
-// sin necesidad de parsear JSON a mano.
+// ControlAction identifica una acción a disparar globalmente en todos los nodos.
+type ControlAction string
+
+const (
+	ControlStartCommit = ControlAction("START_COMMIT")
+	ControlStartReveal = ControlAction("START_REVEAL")
+)
+
+// Message es el formato genérico para los streams directos (Ping/Pong/Chat).
+// Se serializa como JSON delimitado por '\n'.
 type Message struct {
 	Type    MessageType `json:"type"`
 	Payload string      `json:"payload"`
+}
+
+// CommitMsg lleva el hash del commit publicado en el topic randomness/commit.
+// La autoría (qué peer lo envió) viene del propio gossipsub, no del payload.
+type CommitMsg struct {
+	Hash []byte `json:"hash"`
+}
+
+// RevealMsg lleva el value y nonce que abren el commit, publicados en
+// el topic randomness/reveal.
+type RevealMsg struct {
+	Value []byte `json:"value"`
+	Nonce []byte `json:"nonce"`
+}
+
+// ControlMsg dispara una acción global (commit o reveal) en todos los nodos.
+// Se publica en el topic randomness/control.
+type ControlMsg struct {
+	Action ControlAction `json:"action"`
 }

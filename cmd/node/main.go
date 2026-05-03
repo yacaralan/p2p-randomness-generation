@@ -1,24 +1,3 @@
-// Package main es el punto de entrada del binario del nodo.
-// Este archivo conecta el CLI (flags de línea de comandos) con el código
-// del nodo, y mantiene el proceso vivo hasta recibir una señal de apagado.
-//
-// Uso:
-//
-//	go run ./cmd/node [flags]
-//
-// Flags disponibles:
-//
-//	--port int     Puerto TCP a usar (default: 0 = asignado por el SO)
-//	--peer string  Multiaddrs de peers de bootstrap, separados por comas
-//	--ping         Si está activado, envía un Ping a todos los peers cada 5 segundos
-//
-// Ejemplo con dos nodos:
-//
-//	# Terminal 1
-//	go run ./cmd/node --port 4001 --ping
-//
-//	# Terminal 2 (el nodo 2 descubre al nodo 1 automáticamente via mDNS)
-//	go run ./cmd/node --port 4002 --ping
 package main
 
 import (
@@ -35,6 +14,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/ayacar/p2p-randomness-generation/node"
+	"github.com/ayacar/p2p-randomness-generation/protocol"
 )
 
 func main() {
@@ -152,6 +132,39 @@ func chatLoop(ctx context.Context, n *node.Node) {
 			} else {
 				for _, p := range peers {
 					fmt.Printf("[peers] %s\n", p.ShortString())
+				}
+			}
+			continue
+		}
+		if text == "/commit" {
+			if err := n.PubSub().PublishControl(ctx, protocol.ControlStartCommit); err != nil {
+				fmt.Printf("[commit] error publicando trigger: %v\n", err)
+			} else {
+				fmt.Println("[commit] trigger broadcasteado")
+			}
+			continue
+		}
+		if text == "/reveal" {
+			if err := n.PubSub().PublishControl(ctx, protocol.ControlStartReveal); err != nil {
+				fmt.Printf("[reveal] error publicando trigger: %v\n", err)
+			} else {
+				fmt.Println("[reveal] trigger broadcasteado")
+			}
+			continue
+		}
+		if text == "/values" {
+			my := n.CommitReveal().MyValue()
+			if my == nil {
+				fmt.Println("[values] todavía no se ejecutó /commit en este nodo")
+			} else {
+				fmt.Printf("[values] (yo) %s: %x\n", n.Host().ID().ShortString(), my)
+			}
+			values := n.CommitReveal().Values()
+			if len(values) == 0 {
+				fmt.Println("[values] sin reveals verificados de otros peers")
+			} else {
+				for p, v := range values {
+					fmt.Printf("[values] %s: %x\n", p.ShortString(), v)
 				}
 			}
 			continue

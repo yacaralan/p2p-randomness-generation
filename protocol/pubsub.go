@@ -11,9 +11,10 @@ import (
 )
 
 const (
-	TopicCommit = "randomness/commit"
-	TopicReveal = "randomness/reveal"
-	TopicChat   = "randomness/chat"
+	TopicCommit  = "randomness/commit"
+	TopicReveal  = "randomness/reveal"
+	TopicChat    = "randomness/chat"
+	TopicControl = "randomness/control"
 )
 
 // PubSub gestiona la comunicación broadcast del protocolo usando gossipsub.
@@ -24,22 +25,21 @@ const (
 // determinado por la latencia de propagación de gossipsub, no por decisiones
 // del nodo publicador.
 //
-// Los tres topics mapean a las fases del protocolo:
-//   - randomness/commit: cada nodo publica hash(valor_secreto || nonce)
-//   - randomness/reveal: cada nodo publica valor_secreto || nonce
-//   - randomness/chat:   broadcast de texto para demostración interactiva
+// Los topics mapean a las fases del protocolo:
+//   - randomness/commit:  cada nodo publica hash(value || nonce)
+//   - randomness/reveal:  cada nodo publica (value, nonce)
+//   - randomness/control: dispara acciones globales (/commit, /reveal)
+//   - randomness/chat:    broadcast de texto para demostración interactiva
 type PubSub struct {
-	ps          *pubsub.PubSub
-	commitTopic *pubsub.Topic
-	revealTopic *pubsub.Topic
-	chatTopic   *pubsub.Topic
-	localPeerID peer.ID
+	ps           *pubsub.PubSub
+	commitTopic  *pubsub.Topic
+	revealTopic  *pubsub.Topic
+	chatTopic    *pubsub.Topic
+	controlTopic *pubsub.Topic
+	localPeerID  peer.ID
 }
 
-// NewPubSub crea una instancia de gossipsub y se une a los tres topics del protocolo.
-//
-// gossipsub es el algoritmo de difusión usado en producción por Ethereum y Filecoin.
-// Mantiene una malla de peers por topic y propaga mensajes en O(log n) saltos.
+// NewPubSub crea una instancia de gossipsub y se une a los topics del protocolo.
 func NewPubSub(ctx context.Context, h host.Host) (*PubSub, error) {
 	gs, err := pubsub.NewGossipSub(ctx, h)
 	if err != nil {
@@ -50,23 +50,26 @@ func NewPubSub(ctx context.Context, h host.Host) (*PubSub, error) {
 	if err != nil {
 		return nil, fmt.Errorf("unirse a topic %s: %w", TopicCommit, err)
 	}
-
 	revealTopic, err := gs.Join(TopicReveal)
 	if err != nil {
 		return nil, fmt.Errorf("unirse a topic %s: %w", TopicReveal, err)
 	}
-
 	chatTopic, err := gs.Join(TopicChat)
 	if err != nil {
 		return nil, fmt.Errorf("unirse a topic %s: %w", TopicChat, err)
 	}
+	controlTopic, err := gs.Join(TopicControl)
+	if err != nil {
+		return nil, fmt.Errorf("unirse a topic %s: %w", TopicControl, err)
+	}
 
 	return &PubSub{
-		ps:          gs,
-		commitTopic: commitTopic,
-		revealTopic: revealTopic,
-		chatTopic:   chatTopic,
-		localPeerID: h.ID(),
+		ps:           gs,
+		commitTopic:  commitTopic,
+		revealTopic:  revealTopic,
+		chatTopic:    chatTopic,
+		controlTopic: controlTopic,
+		localPeerID:  h.ID(),
 	}, nil
 }
 
@@ -81,24 +84,19 @@ func (p *PubSub) PublishChat(ctx context.Context, text string) error {
 }
 
 // SubscribeChat se suscribe al topic de chat y llama a handler por cada mensaje recibido.
-// Ignora los mensajes enviados por el propio nodo (gossipsub los retransmite localmente).
-// Corre en una goroutine que termina cuando ctx es cancelado.
+// Ignora los mensajes enviados por el propio nodo.
 func (p *PubSub) SubscribeChat(ctx context.Context, handler func(from peer.ID, text string)) error {
 	sub, err := p.chatTopic.Subscribe()
 	if err != nil {
 		return fmt.Errorf("suscribirse a %s: %w", TopicChat, err)
 	}
-
 	go func() {
 		defer sub.Cancel()
 		for {
 			msg, err := sub.Next(ctx)
 			if err != nil {
-				// ctx cancelado: salida normal
 				return
 			}
-			// msg.ReceivedFrom es el último salto (quien nos reenvió el mensaje).
-			// msg.GetFrom() es el publicador original; es lo que queremos mostrar.
 			from := peer.ID(msg.GetFrom())
 			if from == p.localPeerID {
 				continue
@@ -111,18 +109,126 @@ func (p *PubSub) SubscribeChat(ctx context.Context, handler func(from peer.ID, t
 			handler(from, m.Payload)
 		}
 	}()
+	return nil
+}
 
+// PublishCommit publica un commit hash en randomness/commit.
+func (p *PubSub) PublishCommit(ctx context.Context, hash []byte) error {
+	data, err := json.Marshal(CommitMsg{Hash: hash})
+	if err != nil {
+		return fmt.Errorf("serializar commit: %w", err)
+	}
+	return p.commitTopic.Publish(ctx, data)
+}
+
+// SubscribeCommit recibe commits de otros peers (filtra los propios).
+func (p *PubSub) SubscribeCommit(ctx context.Context, handler func(from peer.ID, hash []byte)) error {
+	sub, err := p.commitTopic.Subscribe()
+	if err != nil {
+		return fmt.Errorf("suscribirse a %s: %w", TopicCommit, err)
+	}
+	go func() {
+		defer sub.Cancel()
+		for {
+			msg, err := sub.Next(ctx)
+			if err != nil {
+				return
+			}
+			from := peer.ID(msg.GetFrom())
+			if from == p.localPeerID {
+				continue
+			}
+			var m CommitMsg
+			if err := json.Unmarshal(msg.Data, &m); err != nil {
+				fmt.Printf("[pubsub] commit inválido de %s: %v\n", from.ShortString(), err)
+				continue
+			}
+			handler(from, m.Hash)
+		}
+	}()
+	return nil
+}
+
+// PublishReveal publica un (value, nonce) en randomness/reveal.
+func (p *PubSub) PublishReveal(ctx context.Context, value, nonce []byte) error {
+	data, err := json.Marshal(RevealMsg{Value: value, Nonce: nonce})
+	if err != nil {
+		return fmt.Errorf("serializar reveal: %w", err)
+	}
+	return p.revealTopic.Publish(ctx, data)
+}
+
+// SubscribeReveal recibe reveals de otros peers (filtra los propios).
+func (p *PubSub) SubscribeReveal(ctx context.Context, handler func(from peer.ID, value, nonce []byte)) error {
+	sub, err := p.revealTopic.Subscribe()
+	if err != nil {
+		return fmt.Errorf("suscribirse a %s: %w", TopicReveal, err)
+	}
+	go func() {
+		defer sub.Cancel()
+		for {
+			msg, err := sub.Next(ctx)
+			if err != nil {
+				return
+			}
+			from := peer.ID(msg.GetFrom())
+			if from == p.localPeerID {
+				continue
+			}
+			var m RevealMsg
+			if err := json.Unmarshal(msg.Data, &m); err != nil {
+				fmt.Printf("[pubsub] reveal inválido de %s: %v\n", from.ShortString(), err)
+				continue
+			}
+			handler(from, m.Value, m.Nonce)
+		}
+	}()
+	return nil
+}
+
+// PublishControl dispara una acción global publicándola en randomness/control.
+func (p *PubSub) PublishControl(ctx context.Context, action ControlAction) error {
+	data, err := json.Marshal(ControlMsg{Action: action})
+	if err != nil {
+		return fmt.Errorf("serializar control: %w", err)
+	}
+	return p.controlTopic.Publish(ctx, data)
+}
+
+// SubscribeControl recibe acciones de control. NO filtra los propios:
+// el nodo que disparó /commit también debe ejecutar el commit cuando
+// el mensaje vuelve a través de gossipsub.
+func (p *PubSub) SubscribeControl(ctx context.Context, handler func(from peer.ID, action ControlAction)) error {
+	sub, err := p.controlTopic.Subscribe()
+	if err != nil {
+		return fmt.Errorf("suscribirse a %s: %w", TopicControl, err)
+	}
+	go func() {
+		defer sub.Cancel()
+		for {
+			msg, err := sub.Next(ctx)
+			if err != nil {
+				return
+			}
+			from := peer.ID(msg.GetFrom())
+			var m ControlMsg
+			if err := json.Unmarshal(msg.Data, &m); err != nil {
+				fmt.Printf("[pubsub] control inválido de %s: %v\n", from.ShortString(), err)
+				continue
+			}
+			handler(from, m.Action)
+		}
+	}()
 	return nil
 }
 
 // MeshPeers devuelve los peers suscritos en cada topic del protocolo.
-// Topic.ListPeers() es la API pública de gossipsub para inspeccionar
-// qué peers participan en cada topic.
 func (p *PubSub) MeshPeers() map[string][]peer.ID {
 	return map[string][]peer.ID{
-		TopicCommit: p.commitTopic.ListPeers(),
-		TopicReveal: p.revealTopic.ListPeers(),
-		TopicChat:   p.chatTopic.ListPeers(),
+		TopicCommit:  p.commitTopic.ListPeers(),
+		TopicReveal:  p.revealTopic.ListPeers(),
+		TopicChat:    p.chatTopic.ListPeers(),
+		TopicControl: p.controlTopic.ListPeers(),
 	}
 }
 
@@ -132,4 +238,5 @@ func (p *PubSub) Close() {
 	p.commitTopic.Close()
 	p.revealTopic.Close()
 	p.chatTopic.Close()
+	p.controlTopic.Close()
 }

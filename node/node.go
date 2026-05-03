@@ -19,6 +19,13 @@ import (
 	"github.com/ayacar/p2p-randomness-generation/protocol"
 )
 
+// Códigos ANSI para colorear texto en la terminal.
+// Sólo se usan para destacar errores en los logs.
+const (
+	ansiRed   = "\033[31m"
+	ansiReset = "\033[0m"
+)
+
 // Node representa un participante en la red P2P.
 //
 // En esta primera iteración, un Node puede:
@@ -40,6 +47,7 @@ type Node struct {
 	localDiscovery *discovery.LocalDiscovery
 	handler        *protocol.Handler
 	pubSub         *protocol.PubSub
+	cr             *protocol.CommitReveal
 	config         Config
 }
 
@@ -135,6 +143,13 @@ func (n *Node) Start(ctx context.Context) error {
 	}
 	n.pubSub = ps
 
+	// CommitReveal mantiene el estado del protocolo (commits y reveals
+	// recibidos por peer). Se cablea con los topics de gossipsub abajo.
+	n.cr = protocol.NewCommitReveal(n.host.ID())
+	if err := n.wireCommitReveal(ctx); err != nil {
+		return fmt.Errorf("cablear commit-reveal: %w", err)
+	}
+
 	// Iniciamos el descubrimiento mDNS (funciona en LAN).
 	disc, err := discovery.NewMDNSDiscovery(n.host)
 	if err != nil {
@@ -226,6 +241,74 @@ func (n *Node) Handler() *protocol.Handler {
 // PubSub expone el subsistema de gossipsub.
 func (n *Node) PubSub() *protocol.PubSub {
 	return n.pubSub
+}
+
+// CommitReveal expone el estado del protocolo commit-reveal.
+func (n *Node) CommitReveal() *protocol.CommitReveal {
+	return n.cr
+}
+
+// wireCommitReveal conecta el struct CommitReveal con los topics de gossipsub:
+//   - control: dispara commit/reveal localmente cuando llega el trigger
+//   - commit:  guarda el hash recibido y lo loggea
+//   - reveal:  verifica contra el commit previo y loggea el resultado
+func (n *Node) wireCommitReveal(ctx context.Context) error {
+	if err := n.pubSub.SubscribeControl(ctx, func(from peer.ID, action protocol.ControlAction) {
+		switch action {
+		case protocol.ControlStartCommit:
+			hash, err := n.cr.StartCommit()
+			if err != nil {
+				fmt.Printf("[cr] error generando commit: %v\n", err)
+				return
+			}
+			if err := n.pubSub.PublishCommit(ctx, hash); err != nil {
+				fmt.Printf("[cr] error publicando commit: %v\n", err)
+				return
+			}
+			fmt.Printf("[cr] commit broadcasteado correctamente: %x\n", hash)
+		case protocol.ControlStartReveal:
+			value, nonce, err := n.cr.StartReveal()
+			if err != nil {
+				fmt.Printf("[cr] error iniciando reveal: %v\n", err)
+				return
+			}
+			if err := n.pubSub.PublishReveal(ctx, value, nonce); err != nil {
+				fmt.Printf("[cr] error publicando reveal: %v\n", err)
+				return
+			}
+			fmt.Println("[cr] reveal broadcasteado correctamente")
+		default:
+			fmt.Printf("[cr] acción de control desconocida de %s: %q\n", from.ShortString(), action)
+		}
+	}); err != nil {
+		return err
+	}
+
+	if err := n.pubSub.SubscribeCommit(ctx, func(from peer.ID, hash []byte) {
+		fmt.Printf("[cr] commit recibido de %s: %x\n", from.ShortString(), hash)
+		n.cr.HandleCommit(from, hash)
+	}); err != nil {
+		return err
+	}
+
+	if err := n.pubSub.SubscribeReveal(ctx, func(from peer.ID, value, nonce []byte) {
+		fmt.Printf("[cr] reveal recibido de %s: value=%x nonce=%x\n", from.ShortString(), value, nonce)
+		res := n.cr.HandleReveal(from, value, nonce)
+		switch {
+		case res.Valid:
+			fmt.Printf("[cr] reveal del peer %s verificado correctamente\n", from.ShortString())
+		case !res.HadCommit:
+			fmt.Printf("[cr] %sERROR:%s reveal del peer %s es incorrecto: value=%x nonce=%x — el peer no había publicado un commit previo (hash(value||nonce)=%x)\n",
+				ansiRed, ansiReset, from.ShortString(), value, nonce, res.ComputedCommit)
+		default:
+			fmt.Printf("[cr] %sERROR:%s reveal del peer %s es incorrecto: value=%x nonce=%x — hash(value||nonce)=%x no coincide con el commit previo=%x\n",
+				ansiRed, ansiReset, from.ShortString(), value, nonce, res.ComputedCommit, res.ExpectedCommit)
+		}
+	}); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // Close apaga el nodo cerrando el host libp2p y el servicio mDNS en paralelo.
