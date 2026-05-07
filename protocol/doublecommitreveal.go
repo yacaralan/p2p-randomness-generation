@@ -11,6 +11,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 )
 
+const valueSize = 32
+
 // DoubleCommitReveal implementa el protocolo Commit-Reveal² del paper
 // "Commit-Reveal²: Randomized Reveal Order".
 //

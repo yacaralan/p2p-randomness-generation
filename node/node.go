@@ -47,12 +47,12 @@ type Node struct {
 	localDiscovery *discovery.LocalDiscovery
 	handler        *protocol.Handler
 	pubSub         *protocol.PubSub
-	cr             *protocol.CommitReveal
 	dcr            *protocol.DoubleCommitReveal
 	config         Config
 
-	vdfMu    sync.Mutex
+	vdfMu     sync.Mutex
 	vdfResult []byte
+	vdfProof  []byte
 }
 
 // New crea un Node a partir de una Config pero no inicia ninguna conexión de red.
@@ -146,13 +146,6 @@ func (n *Node) Start(ctx context.Context) error {
 		return fmt.Errorf("iniciar pubsub: %w", err)
 	}
 	n.pubSub = ps
-
-	// CommitReveal mantiene el estado del protocolo (commits y reveals
-	// recibidos por peer). Se cablea con los topics de gossipsub abajo.
-	n.cr = protocol.NewCommitReveal(n.host.ID())
-	if err := n.wireCommitReveal(ctx); err != nil {
-		return fmt.Errorf("cablear commit-reveal: %w", err)
-	}
 
 	// DoubleCommitReveal implementa el protocolo Commit-Reveal².
 	n.dcr = protocol.NewDoubleCommitReveal(n.host.ID())
@@ -253,79 +246,9 @@ func (n *Node) PubSub() *protocol.PubSub {
 	return n.pubSub
 }
 
-// CommitReveal expone el estado del protocolo commit-reveal.
-func (n *Node) CommitReveal() *protocol.CommitReveal {
-	return n.cr
-}
-
 // DoubleCommitReveal expone el estado del protocolo double commit-reveal.
 func (n *Node) DoubleCommitReveal() *protocol.DoubleCommitReveal {
 	return n.dcr
-}
-
-// wireCommitReveal conecta el struct CommitReveal con los topics de gossipsub:
-//   - control: dispara commit/reveal localmente cuando llega el trigger
-//   - commit:  guarda el hash recibido y lo loggea
-//   - reveal:  verifica contra el commit previo y loggea el resultado
-func (n *Node) wireCommitReveal(ctx context.Context) error {
-	if err := n.pubSub.SubscribeControl(ctx, func(from peer.ID, action protocol.ControlAction) {
-		switch action {
-		case protocol.ControlStartCommit:
-			hash, err := n.cr.StartCommit()
-			if err != nil {
-				fmt.Printf("[cr] error generando commit: %v\n", err)
-				return
-			}
-			if err := n.pubSub.PublishCommit(ctx, hash); err != nil {
-				fmt.Printf("[cr] error publicando commit: %v\n", err)
-				return
-			}
-			fmt.Println("[cr] commit broadcasteado correctamente")
-		case protocol.ControlStartReveal:
-			value, nonce, err := n.cr.StartReveal()
-			if err != nil {
-				fmt.Printf("[cr] error iniciando reveal: %v\n", err)
-				return
-			}
-			if err := n.pubSub.PublishReveal(ctx, value, nonce); err != nil {
-				fmt.Printf("[cr] error publicando reveal: %v\n", err)
-				return
-			}
-			fmt.Println("[cr] reveal broadcasteado correctamente")
-		case protocol.ControlStartCommit2, protocol.ControlStartReveal1, protocol.ControlStartReveal2:
-			// manejado por wireDoubleCommitReveal
-		default:
-			fmt.Printf("[cr] acción de control desconocida de %s: %q\n", from.ShortString(), action)
-		}
-	}); err != nil {
-		return err
-	}
-
-	if err := n.pubSub.SubscribeCommit(ctx, func(from peer.ID, hash []byte) {
-		fmt.Printf("[cr] commit recibido de %s\n", from.ShortString())
-		n.cr.HandleCommit(from, hash)
-	}); err != nil {
-		return err
-	}
-
-	if err := n.pubSub.SubscribeReveal(ctx, func(from peer.ID, value, nonce []byte) {
-		fmt.Printf("[cr] reveal recibido de %s\n", from.ShortString())
-		res := n.cr.HandleReveal(from, value, nonce)
-		switch {
-		case res.Valid:
-			fmt.Printf("[cr] reveal del peer %s verificado correctamente\n", from.ShortString())
-		case !res.HadCommit:
-			fmt.Printf("[cr] %sERROR:%s reveal del peer %s inválido: value=%x nonce=%x — el peer no había publicado un commit previo (hash(value||nonce)=%x)\n",
-				ansiRed, ansiReset, from.ShortString(), value, nonce, res.ComputedCommit)
-		default:
-			fmt.Printf("[cr] %sERROR:%s reveal del peer %s inválido: value=%x nonce=%x — hash(value||nonce)=%x no coincide con el commit previo=%x\n",
-				ansiRed, ansiReset, from.ShortString(), value, nonce, res.ComputedCommit, res.ExpectedCommit)
-		}
-	}); err != nil {
-		return err
-	}
-
-	return nil
 }
 
 // wireDoubleCommitReveal conecta el DoubleCommitReveal con los topics gossipsub.
@@ -442,10 +365,11 @@ func (n *Node) publishReveal2(ctx context.Context) error {
 	return nil
 }
 
-// StartVDF dispara el cómputo de la VDF simulada en una goroutine.
+// StartVDF dispara el cómputo de la VDF de Wesolowski en una goroutine.
 // El input es la concatenación de los reveal2 en el orden de la función de distancia.
+// iterations es el parámetro T (número de squarings); controla el delay secuencial.
 // Si el input aún no está disponible (falta algún reveal2), loggea un aviso.
-func (n *Node) StartVDF(ctx context.Context) {
+func (n *Node) StartVDF(ctx context.Context, iterations int) {
 	input, ok := n.dcr.FinalInput()
 	if !ok {
 		fmt.Println("[vdf] input no disponible aún (esperando todos los reveal2)")
@@ -453,15 +377,20 @@ func (n *Node) StartVDF(ctx context.Context) {
 	}
 	go func() {
 		start := time.Now()
-		fmt.Printf("[vdf] iniciando cómputo. input=%x\n", input)
-		result := protocol.ComputeMockVDF(ctx, input, 3*time.Second)
-		if result == nil {
+		fmt.Printf("[vdf] iniciando cómputo (T=%d). input=%x\n", iterations, input)
+		output, proof, err := protocol.ComputeVDF(ctx, input, iterations)
+		if err != nil {
 			return
 		}
 		n.vdfMu.Lock()
-		n.vdfResult = result
+		n.vdfResult = output
+		n.vdfProof = proof
 		n.vdfMu.Unlock()
-		fmt.Printf("[vdf] resultado listo en %v: %x\n", time.Since(start), result)
+		valid := protocol.VerifyVDF(input, iterations, output, proof)
+		fmt.Printf("[vdf] resultado listo en %v\n", time.Since(start))
+		fmt.Printf("[vdf] output=%x\n", output)
+		fmt.Printf("[vdf] proof=%x\n", proof)
+		fmt.Printf("[vdf] verificación inline: %v\n", valid)
 	}()
 }
 
@@ -476,6 +405,13 @@ func (n *Node) VDFResult() []byte {
 	n.vdfMu.Lock()
 	defer n.vdfMu.Unlock()
 	return n.vdfResult
+}
+
+// VDFProof devuelve la proof de correctitud de la VDF si ya fue computada, o nil.
+func (n *Node) VDFProof() []byte {
+	n.vdfMu.Lock()
+	defer n.vdfMu.Unlock()
+	return n.vdfProof
 }
 
 // Close apaga el nodo cerrando el host libp2p y el servicio mDNS en paralelo.

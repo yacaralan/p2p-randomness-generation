@@ -24,6 +24,11 @@ type Config struct {
 	// mDNS hace esto innecesario en redes locales, pero en redes globales
 	// (con DHT) siempre se necesitan algunos peers de bootstrap iniciales.
 	BootstrapPeers []string
+
+	// VDFT es el número de iteraciones de squarings para la VDF de Wesolowski.
+	// Controla el delay secuencial Δ. Valores orientativos: 1000 (demo rápido),
+	// 100000+ (experimentos con delays medibles).
+	VDFT int
 }
 
 // DefaultConfig devuelve una Config con valores razonables para desarrollo:
@@ -33,5 +38,6 @@ func DefaultConfig() Config {
 	return Config{
 		Port:           0,
 		BootstrapPeers: nil,
+		VDFT:           1000,
 	}
 }

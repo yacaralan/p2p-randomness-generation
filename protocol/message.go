@@ -21,8 +21,6 @@ const (
 type ControlAction string
 
 const (
-	ControlStartCommit  = ControlAction("START_COMMIT")
-	ControlStartReveal  = ControlAction("START_REVEAL")
 	ControlStartCommit2 = ControlAction("START_COMMIT2")
 	ControlStartReveal1 = ControlAction("START_REVEAL1")
 	ControlStartReveal2 = ControlAction("START_REVEAL2")
@@ -35,20 +33,7 @@ type Message struct {
 	Payload string      `json:"payload"`
 }
 
-// CommitMsg lleva el hash del commit publicado en el topic randomness/commit.
-// La autoría (qué peer lo envió) viene del propio gossipsub, no del payload.
-type CommitMsg struct {
-	Hash []byte `json:"hash"`
-}
-
-// RevealMsg lleva el value y nonce que abren el commit, publicados en
-// el topic randomness/reveal.
-type RevealMsg struct {
-	Value []byte `json:"value"`
-	Nonce []byte `json:"nonce"`
-}
-
-// ControlMsg dispara una acción global (commit o reveal) en todos los nodos.
+// ControlMsg dispara una acción global en todos los nodos.
 // Se publica en el topic randomness/control.
 type ControlMsg struct {
 	Action ControlAction `json:"action"`

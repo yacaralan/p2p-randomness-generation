@@ -22,10 +22,12 @@ func main() {
 	portFlag := flag.Int("port", 0, "Puerto TCP a escuchar (0 = asignado automáticamente)")
 	peersFlag := flag.String("peer", "", "Multiaddrs de bootstrap separados por comas")
 	pingFlag := flag.Bool("ping", false, "Enviar Ping a todos los peers cada 5 segundos")
+	vdfTFlag := flag.Int("vdf-t", 1000, "Número de iteraciones (T) para la VDF de Wesolowski")
 	flag.Parse()
 
 	cfg := node.DefaultConfig()
 	cfg.Port = *portFlag
+	cfg.VDFT = *vdfTFlag
 	if *peersFlag != "" {
 		cfg.BootstrapPeers = strings.Split(*peersFlag, ",")
 	}
@@ -67,7 +69,7 @@ func main() {
 	}
 
 	// chatLoop lee mensajes de stdin y los publica vía gossipsub.
-	go chatLoop(ctx, n)
+	go chatLoop(ctx, n, cfg.VDFT)
 
 	fmt.Println("[main] nodo corriendo. Escribí un mensaje y Enter para enviarlo a todos los peers. Ctrl+C para salir.")
 
@@ -103,7 +105,7 @@ func main() {
 }
 
 // chatLoop lee líneas de stdin y las publica en el topic gossipsub de chat.
-func chatLoop(ctx context.Context, n *node.Node) {
+func chatLoop(ctx context.Context, n *node.Node, vdfT int) {
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
 		select {
@@ -137,43 +139,10 @@ func chatLoop(ctx context.Context, n *node.Node) {
 			continue
 		}
 		if text == "/commit" {
-			if err := n.PubSub().PublishControl(ctx, protocol.ControlStartCommit); err != nil {
+			if err := n.PubSub().PublishControl(ctx, protocol.ControlStartCommit2); err != nil {
 				fmt.Printf("[commit] error publicando trigger: %v\n", err)
 			} else {
 				fmt.Println("[commit] trigger broadcasteado")
-			}
-			continue
-		}
-		if text == "/reveal" {
-			if err := n.PubSub().PublishControl(ctx, protocol.ControlStartReveal); err != nil {
-				fmt.Printf("[reveal] error publicando trigger: %v\n", err)
-			} else {
-				fmt.Println("[reveal] trigger broadcasteado")
-			}
-			continue
-		}
-		if text == "/values" {
-			my := n.CommitReveal().MyValue()
-			if my == nil {
-				fmt.Println("[values] todavía no se ejecutó /commit en este nodo")
-			} else {
-				fmt.Printf("[values] (yo) %s: %x\n", n.Host().ID().ShortString(), my)
-			}
-			values := n.CommitReveal().Values()
-			if len(values) == 0 {
-				fmt.Println("[values] sin reveals verificados de otros peers")
-			} else {
-				for p, v := range values {
-					fmt.Printf("[values] %s: %x\n", p.ShortString(), v)
-				}
-			}
-			continue
-		}
-		if text == "/commit2" {
-			if err := n.PubSub().PublishControl(ctx, protocol.ControlStartCommit2); err != nil {
-				fmt.Printf("[commit2] error publicando trigger: %v\n", err)
-			} else {
-				fmt.Println("[commit2] trigger broadcasteado")
 			}
 			continue
 		}
@@ -228,13 +197,14 @@ func chatLoop(ctx context.Context, n *node.Node) {
 			}
 			if result := n.VDFResult(); result != nil {
 				fmt.Printf("[values2] output: %x\n", result)
+				fmt.Printf("[values2] proof:  %x\n", n.VDFProof())
 			} else {
 				fmt.Println("[values2] output: no computado aún (ejecutá /vdf)")
 			}
 			continue
 		}
 		if text == "/vdf" {
-			n.StartVDF(ctx)
+			n.StartVDF(ctx, vdfT)
 			continue
 		}
 		if text == "/order" {
