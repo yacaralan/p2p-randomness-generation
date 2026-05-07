@@ -1,0 +1,50 @@
+protocol/vdf.go
+  s_a22bb8d8154d93::t_a7c245f79234ac 6-7,10-17,19-20,22-29,31-36
+protocol/doublecommitreveal.go
+  s_fae1d8cd0f10ff::t_e2975dbd764984 14-15
+protocol/message.go
+  s_fae1d8cd0f10ff::t_f7af4600d4353a 36
+node/options.go
+  s_a22bb8d8154d93::t_6f97c9a7ff6d49 41
+  s_a22bb8d8154d93::t_54177aa25beaf1 27-31
+go.mod
+  s_a22bb8d8154d93::t_5680efc666172e 30
+node/node.go
+  s_a22bb8d8154d93::t_3bd9af3de1faa6 410-416
+  s_a22bb8d8154d93::t_e306ce077d9c8c 53,55
+  s_a22bb8d8154d93::t_d3c8ae7f1f87f9 368,370,372,380-382,386-387,389-393
+protocol/pubsub.go
+  s_fae1d8cd0f10ff::t_faa8f2a9cdf3f5 20,23-25
+cmd/node/main.go
+  s_a22bb8d8154d93::t_5c81dcc33133b6 25,30
+  s_a22bb8d8154d93::t_aafa543751fba3 108
+  s_a22bb8d8154d93::t_94102a70378b1f 72
+  s_a22bb8d8154d93::t_643feb0b5ea846 200
+  s_a22bb8d8154d93::t_f6dee4767681c7 207
+README.md
+  s_fae1d8cd0f10ff::t_044008908d6c1f 21-22,25,27-40,42-54,62-78,83,96,102,108,110,113-117,123,125-126,128-129,131-135
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "6d97ddf53539f82b5a960cdf59ac5a8e20139349",
+  "prompts": {},
+  "sessions": {
+    "s_a22bb8d8154d93": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bbe29880-7497-4aea-8e86-4371c5d153e8",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Alan Yacar <alanroyyacar@gmail.com>"
+    },
+    "s_fae1d8cd0f10ff": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0a67a596-4763-4066-a073-c74b6161ba0a",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Alan Yacar <alanroyyacar@gmail.com>"
+    }
+  }
+}
