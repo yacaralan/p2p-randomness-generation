@@ -24,6 +24,10 @@ const (
 	ControlStartCommit2 = ControlAction("START_COMMIT2")
 	ControlStartReveal1 = ControlAction("START_REVEAL1")
 	ControlStartReveal2 = ControlAction("START_REVEAL2")
+	ControlProposeStart = ControlAction("PROPOSE_START")
+	ControlReadyAck     = ControlAction("READY_ACK")
+	ControlSessionLock  = ControlAction("SESSION_LOCK")
+	ControlReset        = ControlAction("RESET")
 )
 
 // Message es el formato genérico para los streams directos (Ping/Pong/Chat).
@@ -35,8 +39,10 @@ type Message struct {
 
 // ControlMsg dispara una acción global en todos los nodos.
 // Se publica en el topic randomness/control.
+// Payload es opcional; SESSION_LOCK lo usa para transportar la lista de participantes (JSON []string).
 type ControlMsg struct {
-	Action ControlAction `json:"action"`
+	Action  ControlAction `json:"action"`
+	Payload string        `json:"payload,omitempty"`
 }
 
 // Topics para el protocolo double commit-reveal.

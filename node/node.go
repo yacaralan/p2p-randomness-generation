@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -19,28 +20,11 @@ import (
 	"github.com/ayacar/p2p-randomness-generation/protocol"
 )
 
-// Códigos ANSI para colorear texto en la terminal.
-// Sólo se usan para destacar errores en los logs.
 const (
 	ansiRed   = "\033[31m"
 	ansiReset = "\033[0m"
 )
 
-// Node representa un participante en la red P2P.
-//
-// En esta primera iteración, un Node puede:
-//   - Descubrir otros nodos en la red local (via mDNS)
-//   - Conectarse a nodos conocidos (via BootstrapPeers)
-//   - Intercambiar mensajes Ping/Pong con sus peers
-//
-// En iteraciones futuras, Node incorporará:
-//   - Un gestor de rondas (node/round.go): coordina las fases del protocolo
-//   - Un módulo VDF (vdf/): computa y verifica Verifiable Delay Functions
-//   - Persistencia de identidad: guardar/cargar la clave privada del disco
-//
-// La separación entre New (constructor) y Start (ciclo de vida) es intencional:
-// permite crear un Node en tests sin abrir puertos de red, y solo llamar
-// Start en el binario final.
 type Node struct {
 	host           host.Host
 	discovery      *discovery.MDNSDiscovery
@@ -50,46 +34,28 @@ type Node struct {
 	dcr            *protocol.DoubleCommitReveal
 	config         Config
 
-	vdfMu     sync.Mutex
-	vdfResult []byte
-	vdfProof  []byte
+	vdfMu       sync.Mutex
+	vdfResult   []byte
+	vdfProof    []byte
+	vdfTriggered bool
+
+	// estado de la sesión del protocolo
+	sessionMu        sync.Mutex
+	sessionActive    bool
+	sessionSize      int
+	sessionProposer  peer.ID
+	readyPeers       map[peer.ID]bool
+	reveal1Triggered bool
 }
 
-// New crea un Node a partir de una Config pero no inicia ninguna conexión de red.
-//
-// Genera una nueva identidad Ed25519 para este nodo. En libp2p, la identidad
-// de un nodo (su PeerID) se deriva de su clave pública. Esto significa que:
-//   - Cada vez que se ejecuta el programa, el nodo tiene un PeerID diferente
-//   - No hay forma de "hacerse pasar" por otro nodo sin tener su clave privada
-//   - La autenticación entre peers es implícita: la conexión TLS/Noise usa estas claves
-//
 func New(cfg Config) (*Node, error) {
-	// Ed25519 es el algoritmo de firma estándar en libp2p.
-	// El segundo parámetro (-1) indica "tamaño de clave por defecto" (irrelevante para Ed25519).
 	privKey, _, err := crypto.GenerateKeyPair(crypto.Ed25519, -1)
 	if err != nil {
 		return nil, fmt.Errorf("generar clave Ed25519: %w", err)
 	}
 
-	// ListenAddrStrings define en qué interfaz y puerto escuchará el nodo.
-	// "0.0.0.0" significa "todas las interfaces de red disponibles".
-	// El puerto 0 le pide al SO que asigne uno disponible automáticamente.
 	listenAddr := fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.Port)
 
-	// libp2p.New crea el Host: la pieza central de un nodo libp2p.
-	// Un Host gestiona:
-	//   - Las conexiones TCP con otros peers
-	//   - La negociación de protocolos (quién habla qué)
-	//   - El multiplexing de streams sobre una misma conexión
-	//   - La seguridad (TLS o Noise, negociado automáticamente)
-	//
-	// Por defecto, libp2p.New habilita múltiples transportes: TCP, QUIC,
-	// WebTransport y WebRTC. Para este protocolo solo necesitamos TCP.
-	// Deshabilitar los demás tiene dos beneficios concretos:
-	//   1. El nodo escucha en una sola dirección (más simple de leer en logs)
-	//   2. host.Close() termina inmediatamente en lugar de esperar el cierre
-	//      de cada transporte (QUIC en particular tarda ~5s en cerrar por diseño
-	//      del protocolo para enviar los paquetes de fin de conexión)
 	h, err := libp2p.New(
 		libp2p.Identity(privKey),
 		libp2p.ListenAddrStrings(listenAddr),
@@ -102,32 +68,21 @@ func New(cfg Config) (*Node, error) {
 		return nil, fmt.Errorf("crear host libp2p: %w", err)
 	}
 
-	return &Node{host: h, config: cfg}, nil
+	return &Node{
+		host:       h,
+		config:     cfg,
+		readyPeers: make(map[peer.ID]bool),
+	}, nil
 }
 
-// Start inicia los subsistemas del nodo: registra el protocolo, arranca
-// el descubrimiento mDNS, y conecta a los peers de bootstrap manuales.
-//
-// Después de llamar a Start, el nodo está activo y puede recibir conexiones.
-// Bloqueá en main() usando una señal del SO (SIGINT) para mantenerlo vivo.
 func (n *Node) Start(ctx context.Context) error {
-	// Registramos el handler del protocolo /randomness/1.0.0.
-	// A partir de este momento, cualquier peer que abra un stream con ese
-	// protocol ID tendrá su stream despachado al handler correspondiente.
 	n.handler = protocol.NewHandler(n.host)
 
-	// Imprimimos el PeerID y las direcciones del nodo.
-	// El PeerID es la identidad global del nodo en la red.
-	// Las multiaddrs combinan la dirección IP, el puerto TCP y el PeerID
-	// en un único string que otros nodos pueden usar para conectarse.
 	fmt.Printf("[node] PeerID: %s\n", n.host.ID().String())
 	for _, addr := range n.host.Addrs() {
 		fmt.Printf("[node] escuchando en: %s/p2p/%s\n", addr, n.host.ID())
 	}
 
-	// Registramos un notificador de red para loggear conexiones entrantes.
-	// DirInbound indica que el peer remoto fue quien inició la conexión,
-	// es decir, que ese nodo nos descubrió a nosotros.
 	n.host.Network().Notify(&network.NotifyBundle{
 		ConnectedF: func(_ network.Network, conn network.Conn) {
 			if conn.Stat().Direction == network.DirInbound {
@@ -139,52 +94,40 @@ func (n *Node) Start(ctx context.Context) error {
 		},
 	})
 
-	// Iniciamos gossipsub antes que mDNS: gossipsub necesita estar listo
-	// para aceptar peers cuando mDNS empiece a conectarlos.
 	ps, err := protocol.NewPubSub(ctx, n.host)
 	if err != nil {
 		return fmt.Errorf("iniciar pubsub: %w", err)
 	}
 	n.pubSub = ps
 
-	// DoubleCommitReveal implementa el protocolo Commit-Reveal².
 	n.dcr = protocol.NewDoubleCommitReveal(n.host.ID())
 	if err := n.wireDoubleCommitReveal(ctx); err != nil {
 		return fmt.Errorf("cablear double commit-reveal: %w", err)
 	}
 
-	// Iniciamos el descubrimiento mDNS (funciona en LAN).
 	disc, err := discovery.NewMDNSDiscovery(n.host)
 	if err != nil {
 		return fmt.Errorf("iniciar discovery: %w", err)
 	}
 	n.discovery = disc
 
-	// Iniciamos el descubrimiento local via /tmp (funciona en la misma máquina).
-	// Complementa mDNS: resuelve el problema de multicast en loopback en macOS.
 	ld, err := discovery.NewLocalDiscovery(ctx, n.host)
 	if err != nil {
 		return fmt.Errorf("iniciar local discovery: %w", err)
 	}
 	n.localDiscovery = ld
 
-	// Conectamos a los peers de bootstrap manuales (si los hay).
 	for _, addrStr := range n.config.BootstrapPeers {
 		if err := n.ConnectPeer(ctx, addrStr); err != nil {
 			fmt.Printf("[node] bootstrap peer %q: %v\n", addrStr, err)
 		}
 	}
 
-	// Peer exchange: periódicamente intenta conectar a todos los peers que el
-	// protocolo identify de libp2p fue poblando en el peerstore. Esto permite
-	// que la red forme una malla completa sin configuración manual adicional.
 	go n.peerExchangeLoop(ctx)
 
 	return nil
 }
 
-// ConnectPeer conecta a un peer por su multiaddr completa (con PeerID).
-// Se puede llamar tanto en bootstrap como dinámicamente desde stdin.
 func (n *Node) ConnectPeer(ctx context.Context, addrStr string) error {
 	info, err := peer.AddrInfoFromString(addrStr)
 	if err != nil {
@@ -197,10 +140,6 @@ func (n *Node) ConnectPeer(ctx context.Context, addrStr string) error {
 	return nil
 }
 
-// peerExchangeLoop escanea periódicamente el peerstore e intenta conectar a
-// peers conocidos que aún no están conectados. El protocolo identify (habilitado
-// por defecto en libp2p) llena el peerstore con los peers de los vecinos,
-// lo que permite construir automáticamente una malla completa.
 func (n *Node) peerExchangeLoop(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -228,48 +167,68 @@ func (n *Node) peerExchangeLoop(ctx context.Context) {
 	}
 }
 
-// Host expone el host libp2p subyacente.
-// Necesario en cmd/node/main.go para consultar la lista de peers conectados
-// y enviar Pings periódicos.
 func (n *Node) Host() host.Host {
 	return n.host
 }
 
-// Handler expone el handler del protocolo.
-// Necesario en cmd/node/main.go para llamar a handler.Ping() manualmente.
 func (n *Node) Handler() *protocol.Handler {
 	return n.handler
 }
 
-// PubSub expone el subsistema de gossipsub.
 func (n *Node) PubSub() *protocol.PubSub {
 	return n.pubSub
 }
 
-// DoubleCommitReveal expone el estado del protocolo double commit-reveal.
 func (n *Node) DoubleCommitReveal() *protocol.DoubleCommitReveal {
 	return n.dcr
 }
 
-// wireDoubleCommitReveal conecta el DoubleCommitReveal con los topics gossipsub.
-// La condición de "todos revelaron" se verifica en cada reveal1 entrante:
-// cuando len(reveal1s) == len(commit2s), se calcula el orden automáticamente.
-func (n *Node) wireDoubleCommitReveal(ctx context.Context) error {
-	tryComputeOrder := func() {
-		order := n.dcr.ComputeRevealOrder()
-		self := n.dcr.SelfID()
-		fmt.Println("[dcr] orden de reveal2 calculado (mayor d_i primero):")
-		for i, p := range order {
-			tag := ""
-			if p == self {
-				tag = "  [YO]"
-			}
-			fmt.Printf("[dcr]   %d. %s%s\n", i+1, p.ShortString(), tag)
-		}
+// ProposeStart propone el inicio del protocolo a todos los peers.
+// Solo puede llamarse una vez; si ya hay una sesión activa o propuesta, retorna error.
+func (n *Node) ProposeStart(ctx context.Context) error {
+	n.sessionMu.Lock()
+	if n.sessionProposer != "" {
+		n.sessionMu.Unlock()
+		return fmt.Errorf("ya hay una sesión en curso (propuesta por %s)", n.sessionProposer.ShortString())
 	}
+	n.sessionProposer = n.host.ID()
+	n.sessionMu.Unlock()
 
-	if err := n.pubSub.SubscribeControl(ctx, func(from peer.ID, action protocol.ControlAction) {
+	fmt.Println("[session] proponiendo inicio del protocolo...")
+	return n.pubSub.PublishControl(ctx, protocol.ControlProposeStart)
+}
+
+// logRevealOrder calcula y loggea el orden de reveal2.
+func (n *Node) logRevealOrder() {
+	order := n.dcr.ComputeRevealOrder()
+	self := n.dcr.SelfID()
+	fmt.Println("[dcr] orden de reveal2 calculado (mayor d_i primero):")
+	for i, p := range order {
+		tag := ""
+		if p == self {
+			tag = "  [YO]"
+		}
+		fmt.Printf("[dcr]   %d. %s%s\n", i+1, p.ShortString(), tag)
+	}
+}
+
+// wireDoubleCommitReveal conecta el DoubleCommitReveal con los topics gossipsub
+// e implementa la orquestación automática entre fases.
+func (n *Node) wireDoubleCommitReveal(ctx context.Context) error {
+	if err := n.pubSub.SubscribeControl(ctx, func(from peer.ID, action protocol.ControlAction, payload string) {
 		switch action {
+		case protocol.ControlReset:
+			n.Reset()
+
+		case protocol.ControlProposeStart:
+			n.handleProposeStart(ctx, from)
+
+		case protocol.ControlReadyAck:
+			n.handleReadyAck(ctx, from)
+
+		case protocol.ControlSessionLock:
+			n.handleSessionLock(ctx, payload)
+
 		case protocol.ControlStartCommit2:
 			hash, err := n.dcr.StartCommit2()
 			if err != nil {
@@ -294,12 +253,13 @@ func (n *Node) wireDoubleCommitReveal(ctx context.Context) error {
 			}
 			fmt.Println("[dcr] reveal1 broadcasteado")
 			if allReady {
-				tryComputeOrder()
+				n.logRevealOrder()
+				n.triggerReveal2IfFirst(ctx)
 			}
 
 		case protocol.ControlStartReveal2:
 			if !n.dcr.IsFirstReveal2() {
-				return // no soy el primero; espero a que el anterior revele
+				return
 			}
 			if err := n.publishReveal2(ctx); err != nil {
 				fmt.Printf("[dcr] error publicando reveal2: %v\n", err)
@@ -312,6 +272,7 @@ func (n *Node) wireDoubleCommitReveal(ctx context.Context) error {
 	if err := n.pubSub.SubscribeCommit2(ctx, func(from peer.ID, hash []byte) {
 		fmt.Printf("[dcr] commit2 recibido de %s\n", from.ShortString())
 		n.dcr.HandleCommit2(from, hash)
+		n.tryStartReveal1(ctx)
 	}); err != nil {
 		return err
 	}
@@ -326,7 +287,8 @@ func (n *Node) wireDoubleCommitReveal(ctx context.Context) error {
 		}
 		fmt.Printf("[dcr] reveal1 de %s verificado correctamente\n", from.ShortString())
 		if allReady {
-			tryComputeOrder()
+			n.logRevealOrder()
+			n.triggerReveal2IfFirst(ctx)
 		}
 	}); err != nil {
 		return err
@@ -345,11 +307,187 @@ func (n *Node) wireDoubleCommitReveal(ctx context.Context) error {
 				fmt.Printf("[dcr] error publicando reveal2: %v\n", err)
 			}
 		}
+		n.tryStartVDF(ctx)
 	}); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+// handleProposeStart responde a una propuesta de inicio publicando READY_ACK.
+func (n *Node) handleProposeStart(ctx context.Context, from peer.ID) {
+	n.sessionMu.Lock()
+	if n.sessionActive {
+		n.sessionMu.Unlock()
+		return
+	}
+	// Si ya hay un proponente distinto al que acaba de enviar, ignorar.
+	if n.sessionProposer != "" && n.sessionProposer != from && n.sessionProposer != n.host.ID() {
+		n.sessionMu.Unlock()
+		fmt.Printf("[session] PROPOSE_START ignorado (ya hay propuesta de %s)\n", n.sessionProposer.ShortString())
+		return
+	}
+	// Registrar al proponente si aún no se hizo (nodos que no son el iniciador).
+	if n.sessionProposer == "" {
+		n.sessionProposer = from
+	}
+	n.sessionMu.Unlock()
+
+	fmt.Printf("[session] propuesta recibida de %s, enviando READY_ACK\n", from.ShortString())
+	if err := n.pubSub.PublishControl(ctx, protocol.ControlReadyAck); err != nil {
+		fmt.Printf("[session] error enviando READY_ACK: %v\n", err)
+	}
+}
+
+// handleReadyAck acumula confirmaciones; cuando todas llegaron publica SESSION_LOCK.
+// Solo el proponente ejecuta este conteo.
+func (n *Node) handleReadyAck(ctx context.Context, from peer.ID) {
+	n.sessionMu.Lock()
+	if n.sessionActive {
+		n.sessionMu.Unlock()
+		return
+	}
+	// Solo el proponente acumula ACKs y decide cuándo bloquear.
+	if n.sessionProposer != n.host.ID() {
+		n.sessionMu.Unlock()
+		return
+	}
+
+	n.readyPeers[from] = true
+
+	// Esperamos ACK de todos los peers TCP conectados + el propio (que llega vía loopback).
+	tcpPeers := n.host.Network().Peers()
+	expected := len(tcpPeers) + 1 // peers + self
+	got := len(n.readyPeers)
+	n.sessionMu.Unlock()
+
+	fmt.Printf("[session] READY_ACK de %s (%d/%d)\n", from.ShortString(), got, expected)
+
+	if got >= expected {
+		n.publishSessionLock(ctx)
+	}
+}
+
+// publishSessionLock serializa la lista de participantes y publica SESSION_LOCK.
+func (n *Node) publishSessionLock(ctx context.Context) {
+	n.sessionMu.Lock()
+	if n.sessionActive {
+		n.sessionMu.Unlock()
+		return
+	}
+	// Construir lista de participantes: peers que respondieron READY_ACK.
+	participants := make([]string, 0, len(n.readyPeers))
+	for p := range n.readyPeers {
+		participants = append(participants, string(p))
+	}
+	n.sessionMu.Unlock()
+
+	payload, err := json.Marshal(participants)
+	if err != nil {
+		fmt.Printf("[session] error serializando participantes: %v\n", err)
+		return
+	}
+	fmt.Printf("[session] bloqueando sesión con %d participantes\n", len(participants))
+	if err := n.pubSub.PublishControlWithPayload(ctx, protocol.ControlSessionLock, string(payload)); err != nil {
+		fmt.Printf("[session] error publicando SESSION_LOCK: %v\n", err)
+	}
+}
+
+// handleSessionLock procesa el bloqueo de sesión e inicia el commit2.
+func (n *Node) handleSessionLock(ctx context.Context, payload string) {
+	var rawIDs []string
+	if err := json.Unmarshal([]byte(payload), &rawIDs); err != nil {
+		fmt.Printf("[session] SESSION_LOCK con payload inválido: %v\n", err)
+		return
+	}
+
+	n.sessionMu.Lock()
+	if n.sessionActive {
+		n.sessionMu.Unlock()
+		return
+	}
+	n.sessionActive = true
+	n.sessionSize = len(rawIDs)
+	n.sessionMu.Unlock()
+
+	fmt.Printf("[session] sesión bloqueada con %d participantes — iniciando commit2\n", len(rawIDs))
+
+	hash, err := n.dcr.StartCommit2()
+	if err != nil {
+		fmt.Printf("[dcr] error generando commit2: %v\n", err)
+		return
+	}
+	if err := n.pubSub.PublishCommit2(ctx, hash); err != nil {
+		fmt.Printf("[dcr] error publicando commit2: %v\n", err)
+		return
+	}
+	fmt.Println("[dcr] commit2 broadcasteado")
+	// Verificar si ya tenemos todos (caso de 1 participante).
+	n.tryStartReveal1(ctx)
+}
+
+// tryStartReveal1 transiciona a reveal1 cuando se recibieron todos los commit2.
+// Es idempotente: el flag reveal1Triggered garantiza que se ejecuta una sola vez.
+func (n *Node) tryStartReveal1(ctx context.Context) {
+	n.sessionMu.Lock()
+	if !n.sessionActive || n.reveal1Triggered {
+		n.sessionMu.Unlock()
+		return
+	}
+	// Commit2Count adquiere dcr.mu independientemente; el ordering sessionMu→dcr.mu es seguro.
+	count := n.dcr.Commit2Count()
+	if count < n.sessionSize {
+		n.sessionMu.Unlock()
+		return
+	}
+	n.reveal1Triggered = true
+	n.sessionMu.Unlock()
+
+	r, allReady, err := n.dcr.StartReveal1()
+	if err != nil {
+		fmt.Printf("[dcr] error iniciando reveal1: %v\n", err)
+		return
+	}
+	if err := n.pubSub.PublishReveal1(ctx, r); err != nil {
+		fmt.Printf("[dcr] error publicando reveal1: %v\n", err)
+		return
+	}
+	fmt.Println("[dcr] reveal1 broadcasteado (auto)")
+	if allReady {
+		n.logRevealOrder()
+		n.triggerReveal2IfFirst(ctx)
+	}
+}
+
+// triggerReveal2IfFirst dispara el reveal2 del primer nodo en el orden (si somos nosotros).
+func (n *Node) triggerReveal2IfFirst(ctx context.Context) {
+	if !n.dcr.IsFirstReveal2() {
+		return
+	}
+	if err := n.publishReveal2(ctx); err != nil {
+		fmt.Printf("[dcr] error publicando reveal2 (auto): %v\n", err)
+	}
+}
+
+// tryStartVDF inicia la VDF cuando todos los reveal2 están disponibles.
+// Es idempotente gracias al flag vdfTriggered.
+func (n *Node) tryStartVDF(ctx context.Context) {
+	n.vdfMu.Lock()
+	if n.vdfTriggered {
+		n.vdfMu.Unlock()
+		return
+	}
+	_, ok := n.dcr.FinalInput()
+	if !ok {
+		n.vdfMu.Unlock()
+		return
+	}
+	n.vdfTriggered = true
+	n.vdfMu.Unlock()
+
+	fmt.Printf("[vdf] input obtenido: %d ms\n", tsMs())
+	n.StartVDF(ctx, n.config.VDFT)
 }
 
 // publishReveal2 obtiene s_i y lo publica en el topic reveal2.
@@ -366,9 +504,6 @@ func (n *Node) publishReveal2(ctx context.Context) error {
 }
 
 // StartVDF dispara el cómputo de la VDF de Wesolowski en una goroutine.
-// El input es la concatenación de los reveal2 en el orden de la función de distancia.
-// iterations es el parámetro T (número de squarings); controla el delay secuencial.
-// Si el input aún no está disponible (falta algún reveal2), loggea un aviso.
 func (n *Node) StartVDF(ctx context.Context, iterations int) {
 	input, ok := n.dcr.FinalInput()
 	if !ok {
@@ -387,38 +522,59 @@ func (n *Node) StartVDF(ctx context.Context, iterations int) {
 		n.vdfProof = proof
 		n.vdfMu.Unlock()
 		valid := protocol.VerifyVDF(input, iterations, output, proof)
-		fmt.Printf("[vdf] resultado listo en %v\n", time.Since(start))
+		fmt.Printf("[vdf] output obtenido: %d ms (duración: %v)\n", tsMs(), time.Since(start))
 		fmt.Printf("[vdf] output=%x\n", output)
 		fmt.Printf("[vdf] proof=%x\n", proof)
 		fmt.Printf("[vdf] verificación inline: %v\n", valid)
 	}()
 }
 
-// VDFInput devuelve el input de la VDF (concatenación de reveal2 en orden).
-// Retorna (nil, false) si aún no están todos los reveal2.
+// Reset limpia todo el estado de sesión y del protocolo para permitir una nueva ronda.
+func (n *Node) Reset() {
+	n.sessionMu.Lock()
+	n.sessionActive = false
+	n.sessionSize = 0
+	n.sessionProposer = ""
+	n.readyPeers = make(map[peer.ID]bool)
+	n.reveal1Triggered = false
+	n.sessionMu.Unlock()
+
+	n.vdfMu.Lock()
+	n.vdfResult = nil
+	n.vdfProof = nil
+	n.vdfTriggered = false
+	n.vdfMu.Unlock()
+
+	n.dcr.Reset()
+	fmt.Println("[session] estado reseteado — podés iniciar una nueva ronda con /start")
+}
+
+// VDFT expone el parámetro T de la VDF configurado en el nodo.
+func (n *Node) VDFT() int {
+	return n.config.VDFT
+}
+
 func (n *Node) VDFInput() ([]byte, bool) {
 	return n.dcr.FinalInput()
 }
 
-// VDFResult devuelve el output de la VDF si ya fue computado, o nil.
 func (n *Node) VDFResult() []byte {
 	n.vdfMu.Lock()
 	defer n.vdfMu.Unlock()
 	return n.vdfResult
 }
 
-// VDFProof devuelve la proof de correctitud de la VDF si ya fue computada, o nil.
 func (n *Node) VDFProof() []byte {
 	n.vdfMu.Lock()
 	defer n.vdfMu.Unlock()
 	return n.vdfProof
 }
 
-// Close apaga el nodo cerrando el host libp2p y el servicio mDNS en paralelo.
-//
-// Los cerramos concurrentemente porque son independientes entre sí: no tiene
-// sentido esperar a que mDNS termine de enviar sus paquetes de despedida
-// antes de empezar a cerrar el host, ni viceversa.
+// tsMs devuelve el Unix timestamp actual en milisegundos.
+func tsMs() int64 {
+	return time.Now().UnixMilli()
+}
+
 func (n *Node) Close() error {
 	var wg sync.WaitGroup
 

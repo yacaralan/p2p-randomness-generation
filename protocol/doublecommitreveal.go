@@ -293,6 +293,28 @@ func (d *DoubleCommitReveal) SelfID() peer.ID {
 	return d.self
 }
 
+// Commit2Count devuelve cuántos commit2 se han recibido (incluido el propio).
+func (d *DoubleCommitReveal) Commit2Count() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.commit2s)
+}
+
+// Reset limpia todo el estado del protocolo para permitir una nueva ronda.
+func (d *DoubleCommitReveal) Reset() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.mySecret = nil
+	d.myReveal1 = nil
+	d.myCommit2 = nil
+	d.commit2s = make(map[peer.ID][]byte)
+	d.reveal1s = make(map[peer.ID][]byte)
+	d.revealOrder = nil
+	d.revealDist = make(map[peer.ID][]byte)
+	d.reveal2s = make(map[peer.ID][]byte)
+	d.reveal2Sent = false
+}
+
 // PeerValues agrupa los valores de un peer en cada etapa del protocolo.
 // Un campo nil indica que esa etapa aún no fue completada/verificada.
 type PeerValues struct {

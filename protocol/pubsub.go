@@ -114,7 +114,12 @@ func (p *PubSub) SubscribeChat(ctx context.Context, handler func(from peer.ID, t
 
 // PublishControl dispara una acción global publicándola en randomness/control.
 func (p *PubSub) PublishControl(ctx context.Context, action ControlAction) error {
-	data, err := json.Marshal(ControlMsg{Action: action})
+	return p.PublishControlWithPayload(ctx, action, "")
+}
+
+// PublishControlWithPayload es igual que PublishControl pero adjunta un payload opcional.
+func (p *PubSub) PublishControlWithPayload(ctx context.Context, action ControlAction, payload string) error {
+	data, err := json.Marshal(ControlMsg{Action: action, Payload: payload})
 	if err != nil {
 		return fmt.Errorf("serializar control: %w", err)
 	}
@@ -124,7 +129,7 @@ func (p *PubSub) PublishControl(ctx context.Context, action ControlAction) error
 // SubscribeControl recibe acciones de control. NO filtra los propios:
 // el nodo que disparó /commit también debe ejecutar el commit cuando
 // el mensaje vuelve a través de gossipsub.
-func (p *PubSub) SubscribeControl(ctx context.Context, handler func(from peer.ID, action ControlAction)) error {
+func (p *PubSub) SubscribeControl(ctx context.Context, handler func(from peer.ID, action ControlAction, payload string)) error {
 	sub, err := p.controlTopic.Subscribe()
 	if err != nil {
 		return fmt.Errorf("suscribirse a %s: %w", TopicControl, err)
@@ -142,7 +147,7 @@ func (p *PubSub) SubscribeControl(ctx context.Context, handler func(from peer.ID
 				fmt.Printf("[pubsub] control inválido de %s: %v\n", from.ShortString(), err)
 				continue
 			}
-			handler(from, m.Action)
+			handler(from, m.Action, m.Payload)
 		}
 	}()
 	return nil

@@ -69,7 +69,7 @@ func main() {
 	}
 
 	// chatLoop lee mensajes de stdin y los publica vía gossipsub.
-	go chatLoop(ctx, n, cfg.VDFT)
+	go chatLoop(ctx, n)
 
 	fmt.Println("[main] nodo corriendo. Escribí un mensaje y Enter para enviarlo a todos los peers. Ctrl+C para salir.")
 
@@ -105,7 +105,7 @@ func main() {
 }
 
 // chatLoop lee líneas de stdin y las publica en el topic gossipsub de chat.
-func chatLoop(ctx context.Context, n *node.Node, vdfT int) {
+func chatLoop(ctx context.Context, n *node.Node) {
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
 		select {
@@ -135,6 +135,18 @@ func chatLoop(ctx context.Context, n *node.Node, vdfT int) {
 				for _, p := range peers {
 					fmt.Printf("[peers] %s\n", p.ShortString())
 				}
+			}
+			continue
+		}
+		if text == "/start" {
+			if err := n.ProposeStart(ctx); err != nil {
+				fmt.Printf("[start] error: %v\n", err)
+			}
+			continue
+		}
+		if text == "/reset" {
+			if err := n.PubSub().PublishControl(ctx, protocol.ControlReset); err != nil {
+				fmt.Printf("[reset] error publicando reset: %v\n", err)
 			}
 			continue
 		}
@@ -204,7 +216,7 @@ func chatLoop(ctx context.Context, n *node.Node, vdfT int) {
 			continue
 		}
 		if text == "/vdf" {
-			n.StartVDF(ctx, vdfT)
+			n.StartVDF(ctx, n.VDFT())
 			continue
 		}
 		if text == "/order" {
