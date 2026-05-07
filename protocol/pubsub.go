@@ -26,16 +26,22 @@ const (
 // del nodo publicador.
 //
 // Los topics mapean a las fases del protocolo:
-//   - randomness/commit:  cada nodo publica hash(value || nonce)
-//   - randomness/reveal:  cada nodo publica (value, nonce)
-//   - randomness/control: dispara acciones globales (/commit, /reveal)
-//   - randomness/chat:    broadcast de texto para demostración interactiva
+//   - randomness/commit:   cada nodo publica hash(value || nonce)       [commit-reveal simple]
+//   - randomness/reveal:   cada nodo publica (value, nonce)             [commit-reveal simple]
+//   - randomness/control:  dispara acciones globales
+//   - randomness/chat:     broadcast de texto para demostración
+//   - randomness/commit2:  cada nodo publica c_i = H(H(s_i))           [double commit-reveal]
+//   - randomness/reveal1:  cada nodo publica r_i = H(s_i)              [double commit-reveal]
+//   - randomness/reveal2:  cada nodo publica s_i                        [double commit-reveal]
 type PubSub struct {
 	ps           *pubsub.PubSub
 	commitTopic  *pubsub.Topic
 	revealTopic  *pubsub.Topic
 	chatTopic    *pubsub.Topic
 	controlTopic *pubsub.Topic
+	commit2Topic *pubsub.Topic
+	reveal1Topic *pubsub.Topic
+	reveal2Topic *pubsub.Topic
 	localPeerID  peer.ID
 }
 
@@ -63,12 +69,28 @@ func NewPubSub(ctx context.Context, h host.Host) (*PubSub, error) {
 		return nil, fmt.Errorf("unirse a topic %s: %w", TopicControl, err)
 	}
 
+	commit2Topic, err := gs.Join(TopicCommit2)
+	if err != nil {
+		return nil, fmt.Errorf("unirse a topic %s: %w", TopicCommit2, err)
+	}
+	reveal1Topic, err := gs.Join(TopicReveal1)
+	if err != nil {
+		return nil, fmt.Errorf("unirse a topic %s: %w", TopicReveal1, err)
+	}
+	reveal2Topic, err := gs.Join(TopicReveal2)
+	if err != nil {
+		return nil, fmt.Errorf("unirse a topic %s: %w", TopicReveal2, err)
+	}
+
 	return &PubSub{
 		ps:           gs,
 		commitTopic:  commitTopic,
 		revealTopic:  revealTopic,
 		chatTopic:    chatTopic,
 		controlTopic: controlTopic,
+		commit2Topic: commit2Topic,
+		reveal1Topic: reveal1Topic,
+		reveal2Topic: reveal2Topic,
 		localPeerID:  h.ID(),
 	}, nil
 }
@@ -222,6 +244,117 @@ func (p *PubSub) SubscribeControl(ctx context.Context, handler func(from peer.ID
 	return nil
 }
 
+// PublishCommit2 publica c_i = H(H(s_i)) en randomness/commit2.
+func (p *PubSub) PublishCommit2(ctx context.Context, hash []byte) error {
+	data, err := json.Marshal(Commit2Msg{Hash: hash})
+	if err != nil {
+		return fmt.Errorf("serializar commit2: %w", err)
+	}
+	return p.commit2Topic.Publish(ctx, data)
+}
+
+// SubscribeCommit2 recibe commit2 de otros peers (filtra los propios).
+func (p *PubSub) SubscribeCommit2(ctx context.Context, handler func(from peer.ID, hash []byte)) error {
+	sub, err := p.commit2Topic.Subscribe()
+	if err != nil {
+		return fmt.Errorf("suscribirse a %s: %w", TopicCommit2, err)
+	}
+	go func() {
+		defer sub.Cancel()
+		for {
+			msg, err := sub.Next(ctx)
+			if err != nil {
+				return
+			}
+			from := peer.ID(msg.GetFrom())
+			if from == p.localPeerID {
+				continue
+			}
+			var m Commit2Msg
+			if err := json.Unmarshal(msg.Data, &m); err != nil {
+				fmt.Printf("[pubsub] commit2 inválido de %s: %v\n", from.ShortString(), err)
+				continue
+			}
+			handler(from, m.Hash)
+		}
+	}()
+	return nil
+}
+
+// PublishReveal1 publica r_i = H(s_i) en randomness/reveal1.
+func (p *PubSub) PublishReveal1(ctx context.Context, hash []byte) error {
+	data, err := json.Marshal(Reveal1Msg{Hash: hash})
+	if err != nil {
+		return fmt.Errorf("serializar reveal1: %w", err)
+	}
+	return p.reveal1Topic.Publish(ctx, data)
+}
+
+// SubscribeReveal1 recibe reveal1 de otros peers (filtra los propios).
+func (p *PubSub) SubscribeReveal1(ctx context.Context, handler func(from peer.ID, hash []byte)) error {
+	sub, err := p.reveal1Topic.Subscribe()
+	if err != nil {
+		return fmt.Errorf("suscribirse a %s: %w", TopicReveal1, err)
+	}
+	go func() {
+		defer sub.Cancel()
+		for {
+			msg, err := sub.Next(ctx)
+			if err != nil {
+				return
+			}
+			from := peer.ID(msg.GetFrom())
+			if from == p.localPeerID {
+				continue
+			}
+			var m Reveal1Msg
+			if err := json.Unmarshal(msg.Data, &m); err != nil {
+				fmt.Printf("[pubsub] reveal1 inválido de %s: %v\n", from.ShortString(), err)
+				continue
+			}
+			handler(from, m.Hash)
+		}
+	}()
+	return nil
+}
+
+// PublishReveal2 publica s_i en randomness/reveal2.
+func (p *PubSub) PublishReveal2(ctx context.Context, secret []byte) error {
+	data, err := json.Marshal(Reveal2Msg{Secret: secret})
+	if err != nil {
+		return fmt.Errorf("serializar reveal2: %w", err)
+	}
+	return p.reveal2Topic.Publish(ctx, data)
+}
+
+// SubscribeReveal2 recibe reveal2 de otros peers (filtra los propios).
+func (p *PubSub) SubscribeReveal2(ctx context.Context, handler func(from peer.ID, secret []byte)) error {
+	sub, err := p.reveal2Topic.Subscribe()
+	if err != nil {
+		return fmt.Errorf("suscribirse a %s: %w", TopicReveal2, err)
+	}
+	go func() {
+		defer sub.Cancel()
+		for {
+			msg, err := sub.Next(ctx)
+			if err != nil {
+				return
+			}
+			from := peer.ID(msg.GetFrom())
+			if from == p.localPeerID {
+				continue
+			}
+			var m Reveal2Msg
+			if err := json.Unmarshal(msg.Data, &m); err != nil {
+				fmt.Printf("[pubsub] reveal2 inválido de %s: %v\n", from.ShortString(), err)
+				continue
+			}
+			handler(from, m.Secret)
+		}
+	}()
+	return nil
+}
+
 // MeshPeers devuelve los peers suscritos en cada topic del protocolo.
 func (p *PubSub) MeshPeers() map[string][]peer.ID {
 	return map[string][]peer.ID{
@@ -229,6 +362,9 @@ func (p *PubSub) MeshPeers() map[string][]peer.ID {
 		TopicReveal:  p.revealTopic.ListPeers(),
 		TopicChat:    p.chatTopic.ListPeers(),
 		TopicControl: p.controlTopic.ListPeers(),
+		TopicCommit2: p.commit2Topic.ListPeers(),
+		TopicReveal1: p.reveal1Topic.ListPeers(),
+		TopicReveal2: p.reveal2Topic.ListPeers(),
 	}
 }
 
@@ -239,4 +375,7 @@ func (p *PubSub) Close() {
 	p.revealTopic.Close()
 	p.chatTopic.Close()
 	p.controlTopic.Close()
+	p.commit2Topic.Close()
+	p.reveal1Topic.Close()
+	p.reveal2Topic.Close()
 }

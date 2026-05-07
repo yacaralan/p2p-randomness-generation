@@ -21,8 +21,11 @@ const (
 type ControlAction string
 
 const (
-	ControlStartCommit = ControlAction("START_COMMIT")
-	ControlStartReveal = ControlAction("START_REVEAL")
+	ControlStartCommit  = ControlAction("START_COMMIT")
+	ControlStartReveal  = ControlAction("START_REVEAL")
+	ControlStartCommit2 = ControlAction("START_COMMIT2")
+	ControlStartReveal1 = ControlAction("START_REVEAL1")
+	ControlStartReveal2 = ControlAction("START_REVEAL2")
 )
 
 // Message es el formato genérico para los streams directos (Ping/Pong/Chat).
@@ -49,4 +52,26 @@ type RevealMsg struct {
 // Se publica en el topic randomness/control.
 type ControlMsg struct {
 	Action ControlAction `json:"action"`
+}
+
+// Topics para el protocolo double commit-reveal.
+const (
+	TopicCommit2 = "randomness/commit2"
+	TopicReveal1 = "randomness/reveal1"
+	TopicReveal2 = "randomness/reveal2"
+)
+
+// Commit2Msg lleva c_i = H(H(s_i)), el segundo commit del protocolo.
+type Commit2Msg struct {
+	Hash []byte `json:"hash"`
+}
+
+// Reveal1Msg lleva r_i = H(s_i), el primer reveal del protocolo.
+type Reveal1Msg struct {
+	Hash []byte `json:"hash"`
+}
+
+// Reveal2Msg lleva s_i, el secreto original del protocolo.
+type Reveal2Msg struct {
+	Secret []byte `json:"secret"`
 }

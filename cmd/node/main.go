@@ -169,6 +169,92 @@ func chatLoop(ctx context.Context, n *node.Node) {
 			}
 			continue
 		}
+		if text == "/commit2" {
+			if err := n.PubSub().PublishControl(ctx, protocol.ControlStartCommit2); err != nil {
+				fmt.Printf("[commit2] error publicando trigger: %v\n", err)
+			} else {
+				fmt.Println("[commit2] trigger broadcasteado")
+			}
+			continue
+		}
+		if text == "/reveal1" {
+			if err := n.PubSub().PublishControl(ctx, protocol.ControlStartReveal1); err != nil {
+				fmt.Printf("[reveal1] error publicando trigger: %v\n", err)
+			} else {
+				fmt.Println("[reveal1] trigger broadcasteado")
+			}
+			continue
+		}
+		if text == "/reveal2" {
+			if order := n.DoubleCommitReveal().RevealOrder(); len(order) == 0 {
+				fmt.Println("[reveal2] reveal1 has not finished, cannot start reveal2")
+			} else {
+				if err := n.PubSub().PublishControl(ctx, protocol.ControlStartReveal2); err != nil {
+					fmt.Printf("[reveal2] error publicando trigger: %v\n", err)
+				} else {
+					fmt.Println("[reveal2] trigger broadcasteado")
+				}
+			}
+			continue
+		}
+		if text == "/values2" {
+			all := n.DoubleCommitReveal().AllValues()
+			self := n.DoubleCommitReveal().SelfID()
+			if len(all) == 0 {
+				fmt.Println("[values2] sin datos (ejecutá /commit2 primero)")
+				continue
+			}
+			for p, pv := range all {
+				tag := ""
+				if p == self {
+					tag = " [YO]"
+				}
+				fmt.Printf("[values2] %s%s\n", p.ShortString(), tag)
+				if pv.Commit2 != nil {
+					fmt.Printf("           commit2  (c_i): %x\n", pv.Commit2)
+				}
+				if pv.Reveal1 != nil {
+					fmt.Printf("           reveal1  (r_i): %x\n", pv.Reveal1)
+				}
+				if pv.Reveal2 != nil {
+					fmt.Printf("           reveal2  (s_i): %x\n", pv.Reveal2)
+				}
+			}
+			fmt.Println("[values2] --- VDF ---")
+			if input, ok := n.VDFInput(); ok {
+				fmt.Printf("[values2] input:  %x\n", input)
+			} else {
+				fmt.Println("[values2] input:  no disponible (esperando reveal2 de todos los peers)")
+			}
+			if result := n.VDFResult(); result != nil {
+				fmt.Printf("[values2] output: %x\n", result)
+			} else {
+				fmt.Println("[values2] output: no computado aún (ejecutá /vdf)")
+			}
+			continue
+		}
+		if text == "/vdf" {
+			n.StartVDF(ctx)
+			continue
+		}
+		if text == "/order" {
+			order := n.DoubleCommitReveal().RevealOrder()
+			if len(order) == 0 {
+				fmt.Println("[order] orden aún no calculado (esperando todos los reveal1)")
+				continue
+			}
+			dists := n.DoubleCommitReveal().RevealDist()
+			self := n.DoubleCommitReveal().SelfID()
+			fmt.Println("[order] orden de reveal2 (mayor d_i primero):")
+			for i, p := range order {
+				tag := ""
+				if p == self {
+					tag = "  [YO]"
+				}
+				fmt.Printf("[order]   %d. %s  d_i=%x%s\n", i+1, p.ShortString(), dists[p], tag)
+			}
+			continue
+		}
 		if text == "/mesh" {
 			mesh := n.PubSub().MeshPeers()
 			for topic, peers := range mesh {

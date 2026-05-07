@@ -48,7 +48,11 @@ type Node struct {
 	handler        *protocol.Handler
 	pubSub         *protocol.PubSub
 	cr             *protocol.CommitReveal
+	dcr            *protocol.DoubleCommitReveal
 	config         Config
+
+	vdfMu    sync.Mutex
+	vdfResult []byte
 }
 
 // New crea un Node a partir de una Config pero no inicia ninguna conexión de red.
@@ -150,6 +154,12 @@ func (n *Node) Start(ctx context.Context) error {
 		return fmt.Errorf("cablear commit-reveal: %w", err)
 	}
 
+	// DoubleCommitReveal implementa el protocolo Commit-Reveal².
+	n.dcr = protocol.NewDoubleCommitReveal(n.host.ID())
+	if err := n.wireDoubleCommitReveal(ctx); err != nil {
+		return fmt.Errorf("cablear double commit-reveal: %w", err)
+	}
+
 	// Iniciamos el descubrimiento mDNS (funciona en LAN).
 	disc, err := discovery.NewMDNSDiscovery(n.host)
 	if err != nil {
@@ -248,6 +258,11 @@ func (n *Node) CommitReveal() *protocol.CommitReveal {
 	return n.cr
 }
 
+// DoubleCommitReveal expone el estado del protocolo double commit-reveal.
+func (n *Node) DoubleCommitReveal() *protocol.DoubleCommitReveal {
+	return n.dcr
+}
+
 // wireCommitReveal conecta el struct CommitReveal con los topics de gossipsub:
 //   - control: dispara commit/reveal localmente cuando llega el trigger
 //   - commit:  guarda el hash recibido y lo loggea
@@ -265,7 +280,7 @@ func (n *Node) wireCommitReveal(ctx context.Context) error {
 				fmt.Printf("[cr] error publicando commit: %v\n", err)
 				return
 			}
-			fmt.Printf("[cr] commit broadcasteado correctamente: %x\n", hash)
+			fmt.Println("[cr] commit broadcasteado correctamente")
 		case protocol.ControlStartReveal:
 			value, nonce, err := n.cr.StartReveal()
 			if err != nil {
@@ -277,6 +292,8 @@ func (n *Node) wireCommitReveal(ctx context.Context) error {
 				return
 			}
 			fmt.Println("[cr] reveal broadcasteado correctamente")
+		case protocol.ControlStartCommit2, protocol.ControlStartReveal1, protocol.ControlStartReveal2:
+			// manejado por wireDoubleCommitReveal
 		default:
 			fmt.Printf("[cr] acción de control desconocida de %s: %q\n", from.ShortString(), action)
 		}
@@ -285,23 +302,23 @@ func (n *Node) wireCommitReveal(ctx context.Context) error {
 	}
 
 	if err := n.pubSub.SubscribeCommit(ctx, func(from peer.ID, hash []byte) {
-		fmt.Printf("[cr] commit recibido de %s: %x\n", from.ShortString(), hash)
+		fmt.Printf("[cr] commit recibido de %s\n", from.ShortString())
 		n.cr.HandleCommit(from, hash)
 	}); err != nil {
 		return err
 	}
 
 	if err := n.pubSub.SubscribeReveal(ctx, func(from peer.ID, value, nonce []byte) {
-		fmt.Printf("[cr] reveal recibido de %s: value=%x nonce=%x\n", from.ShortString(), value, nonce)
+		fmt.Printf("[cr] reveal recibido de %s\n", from.ShortString())
 		res := n.cr.HandleReveal(from, value, nonce)
 		switch {
 		case res.Valid:
 			fmt.Printf("[cr] reveal del peer %s verificado correctamente\n", from.ShortString())
 		case !res.HadCommit:
-			fmt.Printf("[cr] %sERROR:%s reveal del peer %s es incorrecto: value=%x nonce=%x — el peer no había publicado un commit previo (hash(value||nonce)=%x)\n",
+			fmt.Printf("[cr] %sERROR:%s reveal del peer %s inválido: value=%x nonce=%x — el peer no había publicado un commit previo (hash(value||nonce)=%x)\n",
 				ansiRed, ansiReset, from.ShortString(), value, nonce, res.ComputedCommit)
 		default:
-			fmt.Printf("[cr] %sERROR:%s reveal del peer %s es incorrecto: value=%x nonce=%x — hash(value||nonce)=%x no coincide con el commit previo=%x\n",
+			fmt.Printf("[cr] %sERROR:%s reveal del peer %s inválido: value=%x nonce=%x — hash(value||nonce)=%x no coincide con el commit previo=%x\n",
 				ansiRed, ansiReset, from.ShortString(), value, nonce, res.ComputedCommit, res.ExpectedCommit)
 		}
 	}); err != nil {
@@ -309,6 +326,156 @@ func (n *Node) wireCommitReveal(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// wireDoubleCommitReveal conecta el DoubleCommitReveal con los topics gossipsub.
+// La condición de "todos revelaron" se verifica en cada reveal1 entrante:
+// cuando len(reveal1s) == len(commit2s), se calcula el orden automáticamente.
+func (n *Node) wireDoubleCommitReveal(ctx context.Context) error {
+	tryComputeOrder := func() {
+		order := n.dcr.ComputeRevealOrder()
+		self := n.dcr.SelfID()
+		fmt.Println("[dcr] orden de reveal2 calculado (mayor d_i primero):")
+		for i, p := range order {
+			tag := ""
+			if p == self {
+				tag = "  [YO]"
+			}
+			fmt.Printf("[dcr]   %d. %s%s\n", i+1, p.ShortString(), tag)
+		}
+	}
+
+	if err := n.pubSub.SubscribeControl(ctx, func(from peer.ID, action protocol.ControlAction) {
+		switch action {
+		case protocol.ControlStartCommit2:
+			hash, err := n.dcr.StartCommit2()
+			if err != nil {
+				fmt.Printf("[dcr] error generando commit2: %v\n", err)
+				return
+			}
+			if err := n.pubSub.PublishCommit2(ctx, hash); err != nil {
+				fmt.Printf("[dcr] error publicando commit2: %v\n", err)
+				return
+			}
+			fmt.Println("[dcr] commit2 broadcasteado")
+
+		case protocol.ControlStartReveal1:
+			r, allReady, err := n.dcr.StartReveal1()
+			if err != nil {
+				fmt.Printf("[dcr] error iniciando reveal1: %v\n", err)
+				return
+			}
+			if err := n.pubSub.PublishReveal1(ctx, r); err != nil {
+				fmt.Printf("[dcr] error publicando reveal1: %v\n", err)
+				return
+			}
+			fmt.Println("[dcr] reveal1 broadcasteado")
+			if allReady {
+				tryComputeOrder()
+			}
+
+		case protocol.ControlStartReveal2:
+			if !n.dcr.IsFirstReveal2() {
+				return // no soy el primero; espero a que el anterior revele
+			}
+			if err := n.publishReveal2(ctx); err != nil {
+				fmt.Printf("[dcr] error publicando reveal2: %v\n", err)
+			}
+		}
+	}); err != nil {
+		return err
+	}
+
+	if err := n.pubSub.SubscribeCommit2(ctx, func(from peer.ID, hash []byte) {
+		fmt.Printf("[dcr] commit2 recibido de %s\n", from.ShortString())
+		n.dcr.HandleCommit2(from, hash)
+	}); err != nil {
+		return err
+	}
+
+	if err := n.pubSub.SubscribeReveal1(ctx, func(from peer.ID, hash []byte) {
+		fmt.Printf("[dcr] reveal1 recibido de %s\n", from.ShortString())
+		valid, allReady := n.dcr.HandleReveal1(from, hash)
+		if !valid {
+			fmt.Printf("[dcr] %sERROR:%s reveal1 de %s inválido (hash no coincide con commit2)\n",
+				ansiRed, ansiReset, from.ShortString())
+			return
+		}
+		fmt.Printf("[dcr] reveal1 de %s verificado correctamente\n", from.ShortString())
+		if allReady {
+			tryComputeOrder()
+		}
+	}); err != nil {
+		return err
+	}
+
+	if err := n.pubSub.SubscribeReveal2(ctx, func(from peer.ID, secret []byte) {
+		fmt.Printf("[dcr] reveal2 recibido de %s\n", from.ShortString())
+		if !n.dcr.HandleReveal2(from, secret) {
+			fmt.Printf("[dcr] %sERROR:%s reveal2 de %s inválido (H(secret) no coincide con reveal1)\n",
+				ansiRed, ansiReset, from.ShortString())
+			return
+		}
+		fmt.Printf("[dcr] reveal2 de %s verificado correctamente\n", from.ShortString())
+		if n.dcr.MyTurnAfter(from) {
+			if err := n.publishReveal2(ctx); err != nil {
+				fmt.Printf("[dcr] error publicando reveal2: %v\n", err)
+			}
+		}
+	}); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// publishReveal2 obtiene s_i y lo publica en el topic reveal2.
+func (n *Node) publishReveal2(ctx context.Context) error {
+	s, err := n.dcr.StartReveal2()
+	if err != nil {
+		return err
+	}
+	if err := n.pubSub.PublishReveal2(ctx, s); err != nil {
+		return err
+	}
+	fmt.Println("[dcr] reveal2 broadcasteado")
+	return nil
+}
+
+// StartVDF dispara el cómputo de la VDF simulada en una goroutine.
+// El input es la concatenación de los reveal2 en el orden de la función de distancia.
+// Si el input aún no está disponible (falta algún reveal2), loggea un aviso.
+func (n *Node) StartVDF(ctx context.Context) {
+	input, ok := n.dcr.FinalInput()
+	if !ok {
+		fmt.Println("[vdf] input no disponible aún (esperando todos los reveal2)")
+		return
+	}
+	go func() {
+		start := time.Now()
+		fmt.Printf("[vdf] iniciando cómputo. input=%x\n", input)
+		result := protocol.ComputeMockVDF(ctx, input, 3*time.Second)
+		if result == nil {
+			return
+		}
+		n.vdfMu.Lock()
+		n.vdfResult = result
+		n.vdfMu.Unlock()
+		fmt.Printf("[vdf] resultado listo en %v: %x\n", time.Since(start), result)
+	}()
+}
+
+// VDFInput devuelve el input de la VDF (concatenación de reveal2 en orden).
+// Retorna (nil, false) si aún no están todos los reveal2.
+func (n *Node) VDFInput() ([]byte, bool) {
+	return n.dcr.FinalInput()
+}
+
+// VDFResult devuelve el output de la VDF si ya fue computado, o nil.
+func (n *Node) VDFResult() []byte {
+	n.vdfMu.Lock()
+	defer n.vdfMu.Unlock()
+	return n.vdfResult
 }
 
 // Close apaga el nodo cerrando el host libp2p y el servicio mDNS en paralelo.
