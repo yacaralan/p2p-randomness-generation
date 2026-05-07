@@ -1,0 +1,56 @@
+protocol/pubsub.go
+  a0d1e7581d5bbe76 29-35,42-44,72-84,91-93,247-357,365-367,378-380
+protocol/doublecommitreveal.go
+  h_c2303171a42e2d 135
+  a0d1e7581d5bbe76 1-134,136-241,243-248,250,271-353
+  s_343cd0bce3430c::t_85edb56eec935e 242,249,251-270
+node/node.go
+  a0d1e7581d5bbe76 51,157-162,261-265,283,295-296,305,312,318,321,331-444
+  s_343cd0bce3430c::t_35da7002a07bcd 53-55
+  s_343cd0bce3430c::t_e6b7e53ae7146e 445-480
+cmd/node/main.go
+  s_343cd0bce3430c::t_68fc5d5c93005c 223-233
+  a0d1e7581d5bbe76 172-222,234-235,240-257
+  s_343cd0bce3430c::t_670cabb9641255 236-239
+protocol/vdf.go
+  s_343cd0bce3430c::t_716cde3b14108c 1-20
+protocol/message.go
+  a0d1e7581d5bbe76 24-28,56-77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "cb04fb73764d2e060e08494707384be0971bdb71",
+  "prompts": {
+    "a0d1e7581d5bbe76": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aefcb084-e1c8-401b-854d-3d3d7fe559a4",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Alan Yacar <alanroyyacar@gmail.com>",
+      "total_additions": 725,
+      "total_deletions": 31,
+      "accepted_lines": 704,
+      "overriden_lines": 1
+    }
+  },
+  "humans": {
+    "h_bb7e66f11a15f7": {
+      "author": "Alan Yacar"
+    },
+    "h_c2303171a42e2d": {
+      "author": "Alan Yacar <alanroyyacar@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_343cd0bce3430c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09e99f80-7273-4b57-9861-640036d800d3",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Alan Yacar <alanroyyacar@gmail.com>"
+    }
+  }
+}
