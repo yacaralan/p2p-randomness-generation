@@ -153,9 +153,9 @@ func (p *PubSub) SubscribeControl(ctx context.Context, handler func(from peer.ID
 	return nil
 }
 
-// PublishCommit2 publica c_i = H(H(s_i)) en randomness/commit2.
-func (p *PubSub) PublishCommit2(ctx context.Context, hash []byte) error {
-	data, err := json.Marshal(Commit2Msg{Hash: hash})
+// PublishCommit2 publica un Commit2Msg firmado en randomness/commit2.
+func (p *PubSub) PublishCommit2(ctx context.Context, msg Commit2Msg) error {
+	data, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("serializar commit2: %w", err)
 	}
@@ -163,7 +163,8 @@ func (p *PubSub) PublishCommit2(ctx context.Context, hash []byte) error {
 }
 
 // SubscribeCommit2 recibe commit2 de otros peers (filtra los propios).
-func (p *PubSub) SubscribeCommit2(ctx context.Context, handler func(from peer.ID, hash []byte)) error {
+// El callback recibe el mensaje completo incluyendo firma para que el caller pueda verificarla.
+func (p *PubSub) SubscribeCommit2(ctx context.Context, handler func(from peer.ID, msg Commit2Msg)) error {
 	sub, err := p.commit2Topic.Subscribe()
 	if err != nil {
 		return fmt.Errorf("suscribirse a %s: %w", TopicCommit2, err)
@@ -184,15 +185,15 @@ func (p *PubSub) SubscribeCommit2(ctx context.Context, handler func(from peer.ID
 				fmt.Printf("[pubsub] commit2 inválido de %s: %v\n", from.ShortString(), err)
 				continue
 			}
-			handler(from, m.Hash)
+			handler(from, m)
 		}
 	}()
 	return nil
 }
 
-// PublishReveal1 publica r_i = H(s_i) en randomness/reveal1.
-func (p *PubSub) PublishReveal1(ctx context.Context, hash []byte) error {
-	data, err := json.Marshal(Reveal1Msg{Hash: hash})
+// PublishReveal1 publica un Reveal1Msg firmado en randomness/reveal1.
+func (p *PubSub) PublishReveal1(ctx context.Context, msg Reveal1Msg) error {
+	data, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("serializar reveal1: %w", err)
 	}
@@ -200,7 +201,7 @@ func (p *PubSub) PublishReveal1(ctx context.Context, hash []byte) error {
 }
 
 // SubscribeReveal1 recibe reveal1 de otros peers (filtra los propios).
-func (p *PubSub) SubscribeReveal1(ctx context.Context, handler func(from peer.ID, hash []byte)) error {
+func (p *PubSub) SubscribeReveal1(ctx context.Context, handler func(from peer.ID, msg Reveal1Msg)) error {
 	sub, err := p.reveal1Topic.Subscribe()
 	if err != nil {
 		return fmt.Errorf("suscribirse a %s: %w", TopicReveal1, err)
@@ -221,15 +222,15 @@ func (p *PubSub) SubscribeReveal1(ctx context.Context, handler func(from peer.ID
 				fmt.Printf("[pubsub] reveal1 inválido de %s: %v\n", from.ShortString(), err)
 				continue
 			}
-			handler(from, m.Hash)
+			handler(from, m)
 		}
 	}()
 	return nil
 }
 
-// PublishReveal2 publica s_i en randomness/reveal2.
-func (p *PubSub) PublishReveal2(ctx context.Context, secret []byte) error {
-	data, err := json.Marshal(Reveal2Msg{Secret: secret})
+// PublishReveal2 publica un Reveal2Msg firmado en randomness/reveal2.
+func (p *PubSub) PublishReveal2(ctx context.Context, msg Reveal2Msg) error {
+	data, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("serializar reveal2: %w", err)
 	}
@@ -237,7 +238,7 @@ func (p *PubSub) PublishReveal2(ctx context.Context, secret []byte) error {
 }
 
 // SubscribeReveal2 recibe reveal2 de otros peers (filtra los propios).
-func (p *PubSub) SubscribeReveal2(ctx context.Context, handler func(from peer.ID, secret []byte)) error {
+func (p *PubSub) SubscribeReveal2(ctx context.Context, handler func(from peer.ID, msg Reveal2Msg)) error {
 	sub, err := p.reveal2Topic.Subscribe()
 	if err != nil {
 		return fmt.Errorf("suscribirse a %s: %w", TopicReveal2, err)
@@ -258,7 +259,7 @@ func (p *PubSub) SubscribeReveal2(ctx context.Context, handler func(from peer.ID
 				fmt.Printf("[pubsub] reveal2 inválido de %s: %v\n", from.ShortString(), err)
 				continue
 			}
-			handler(from, m.Secret)
+			handler(from, m)
 		}
 	}()
 	return nil

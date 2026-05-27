@@ -21,14 +21,29 @@ const (
 type ControlAction string
 
 const (
-	ControlStartCommit2 = ControlAction("START_COMMIT2")
-	ControlStartReveal1 = ControlAction("START_REVEAL1")
-	ControlStartReveal2 = ControlAction("START_REVEAL2")
-	ControlProposeStart = ControlAction("PROPOSE_START")
-	ControlReadyAck     = ControlAction("READY_ACK")
-	ControlSessionLock  = ControlAction("SESSION_LOCK")
-	ControlReset        = ControlAction("RESET")
+	ControlStartCommit2  = ControlAction("START_COMMIT2")
+	ControlStartReveal1  = ControlAction("START_REVEAL1")
+	ControlStartReveal2  = ControlAction("START_REVEAL2")
+	ControlProposeStart  = ControlAction("PROPOSE_START")
+	ControlReadyAck      = ControlAction("READY_ACK")
+	ControlSessionLock   = ControlAction("SESSION_LOCK")
+	ControlReset         = ControlAction("RESET")
+	ControlTimeoutVote    = ControlAction("TIMEOUT_VOTE")
+	ControlTimeoutDispute = ControlAction("TIMEOUT_DISPUTE")
 )
+
+// TimeoutVotePayload es el payload de un voto de timeout para un peer en una fase.
+type TimeoutVotePayload struct {
+	Phase  string `json:"phase"`
+	Target string `json:"target"`
+}
+
+// TimeoutDisputePayload dispute un voto de timeout reenviando el valor correcto.
+type TimeoutDisputePayload struct {
+	Phase  string `json:"phase"`
+	Target string `json:"target"`
+	Value  []byte `json:"value"`
+}
 
 // Message es el formato genérico para los streams directos (Ping/Pong/Chat).
 // Se serializa como JSON delimitado por '\n'.
@@ -53,16 +68,24 @@ const (
 )
 
 // Commit2Msg lleva c_i = H(H(s_i)), el segundo commit del protocolo.
+// AuthorID y Signature permiten verificar la autoría cuando el mensaje
+// es reenviado por un tercero durante una disputa de timeout.
 type Commit2Msg struct {
-	Hash []byte `json:"hash"`
+	AuthorID  string `json:"author_id"`
+	Hash      []byte `json:"hash"`
+	Signature []byte `json:"signature"`
 }
 
 // Reveal1Msg lleva r_i = H(s_i), el primer reveal del protocolo.
 type Reveal1Msg struct {
-	Hash []byte `json:"hash"`
+	AuthorID  string `json:"author_id"`
+	Hash      []byte `json:"hash"`
+	Signature []byte `json:"signature"`
 }
 
 // Reveal2Msg lleva s_i, el secreto original del protocolo.
 type Reveal2Msg struct {
-	Secret []byte `json:"secret"`
+	AuthorID  string `json:"author_id"`
+	Secret    []byte `json:"secret"`
+	Signature []byte `json:"signature"`
 }

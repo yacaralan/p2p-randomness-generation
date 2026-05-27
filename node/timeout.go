@@ -1,0 +1,287 @@
+package node
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/libp2p/go-libp2p/core/peer"
+
+	"github.com/ayacar/p2p-randomness-generation/protocol"
+)
+
+// --- Helpers de tamaño efectivo y peers abortados ---
+
+func (n *Node) majority() int {
+	return n.sessionSize/2 + 1
+}
+
+func (n *Node) effectiveSize() int {
+	n.timeoutMu.Lock()
+	defer n.timeoutMu.Unlock()
+	return n.sessionSize - len(n.abortedPeers)
+}
+
+func (n *Node) abortedSet() map[peer.ID]bool {
+	n.timeoutMu.Lock()
+	defer n.timeoutMu.Unlock()
+	set := make(map[peer.ID]bool, len(n.abortedPeers))
+	for p := range n.abortedPeers {
+		set[p] = true
+	}
+	return set
+}
+
+func (n *Node) abortedInReveal2Set() map[peer.ID]bool {
+	n.timeoutMu.Lock()
+	defer n.timeoutMu.Unlock()
+	set := make(map[peer.ID]bool)
+	for p, phase := range n.abortedPeers {
+		if phase == "reveal2" {
+			set[p] = true
+		}
+	}
+	return set
+}
+
+func (n *Node) isAborted(p peer.ID) bool {
+	n.timeoutMu.Lock()
+	defer n.timeoutMu.Unlock()
+	_, ok := n.abortedPeers[p]
+	return ok
+}
+
+// --- Timers de fase ---
+
+func stopTimer(t *time.Timer) {
+	if t != nil {
+		t.Stop()
+	}
+}
+
+func (n *Node) startCommitTimer(ctx context.Context) {
+	if n.config.TimeoutCommit == 0 {
+		return
+	}
+	n.commitTimer = time.AfterFunc(n.config.TimeoutCommit, func() {
+		n.onCommitTimeout(ctx)
+	})
+}
+
+func (n *Node) startReveal1Timer(ctx context.Context) {
+	if n.config.TimeoutReveal1 == 0 {
+		return
+	}
+	n.reveal1Timer = time.AfterFunc(n.config.TimeoutReveal1, func() {
+		n.onReveal1Timeout(ctx)
+	})
+}
+
+func (n *Node) startReveal2TimerFor(ctx context.Context, target peer.ID) {
+	if n.config.TimeoutReveal2 == 0 || target == "" {
+		return
+	}
+	n.reveal2TimerTarget = target
+	stopTimer(n.reveal2Timer)
+	n.reveal2Timer = time.AfterFunc(n.config.TimeoutReveal2, func() {
+		n.onReveal2Timeout(ctx, target)
+	})
+}
+
+// --- Callbacks de timeout ---
+
+func (n *Node) onCommitTimeout(ctx context.Context) {
+	n.sessionMu.Lock()
+	if !n.sessionActive {
+		n.sessionMu.Unlock()
+		return
+	}
+	participants := n.sessionParticipants
+	n.sessionMu.Unlock()
+
+	commitPeers := n.dcr.CommitPeers()
+	aborted := n.abortedSet()
+	for _, p := range participants {
+		if !commitPeers[p] && !aborted[p] {
+			fmt.Printf("[timeout] commit2 de %s no llegó — emitiendo TIMEOUT_VOTE\n", p.ShortString())
+			n.broadcastTimeoutVote(ctx, "commit2", p)
+		}
+	}
+}
+
+func (n *Node) onReveal1Timeout(ctx context.Context) {
+	n.sessionMu.Lock()
+	if !n.sessionActive || !n.reveal1Triggered {
+		n.sessionMu.Unlock()
+		return
+	}
+	participants := n.sessionParticipants
+	n.sessionMu.Unlock()
+
+	reveal1Peers := n.dcr.Reveal1Peers()
+	aborted := n.abortedSet()
+	for _, p := range participants {
+		if !reveal1Peers[p] && !aborted[p] {
+			fmt.Printf("[timeout] reveal1 de %s no llegó — emitiendo TIMEOUT_VOTE\n", p.ShortString())
+			n.broadcastTimeoutVote(ctx, "reveal1", p)
+		}
+	}
+}
+
+func (n *Node) onReveal2Timeout(ctx context.Context, target peer.ID) {
+	if n.reveal2TimerTarget != target {
+		return // disparo obsoleto
+	}
+	fmt.Printf("[timeout] reveal2 de %s no llegó — emitiendo TIMEOUT_VOTE\n", target.ShortString())
+	n.broadcastTimeoutVote(ctx, "reveal2", target)
+}
+
+// --- Broadcast de vote/dispute ---
+
+func (n *Node) broadcastTimeoutVote(ctx context.Context, phase string, target peer.ID) {
+	payload, _ := json.Marshal(protocol.TimeoutVotePayload{
+		Phase:  phase,
+		Target: target.String(),
+	})
+	if err := n.pubSub.PublishControlWithPayload(ctx, protocol.ControlTimeoutVote, string(payload)); err != nil {
+		fmt.Printf("[timeout] error publicando TIMEOUT_VOTE: %v\n", err)
+	}
+}
+
+func (n *Node) broadcastTimeoutDispute(ctx context.Context, phase string, target peer.ID, value []byte) {
+	payload, _ := json.Marshal(protocol.TimeoutDisputePayload{
+		Phase:  phase,
+		Target: target.String(),
+		Value:  value,
+	})
+	if err := n.pubSub.PublishControlWithPayload(ctx, protocol.ControlTimeoutDispute, string(payload)); err != nil {
+		fmt.Printf("[timeout] error publicando TIMEOUT_DISPUTE: %v\n", err)
+	}
+}
+
+// --- Handlers de vote/dispute ---
+
+func (n *Node) handleTimeoutVote(ctx context.Context, from peer.ID, phase string, target peer.ID) {
+	if signed, ok := n.getSignedMsg(phase, target); ok {
+		n.broadcastTimeoutDispute(ctx, phase, target, signed)
+	}
+
+	key := fmt.Sprintf("%s:%s", phase, target)
+	n.timeoutMu.Lock()
+	if n.timeoutVotes[key] == nil {
+		n.timeoutVotes[key] = make(map[peer.ID]bool)
+	}
+	n.timeoutVotes[key][from] = true
+	votes := len(n.timeoutVotes[key])
+	n.timeoutMu.Unlock()
+
+	if votes >= n.majority() {
+		n.abortPeer(ctx, target, phase)
+	}
+}
+
+func (n *Node) handleTimeoutDispute(ctx context.Context, from peer.ID, phase string, target peer.ID, value []byte) {
+	key := fmt.Sprintf("%s:%s", phase, target)
+	n.timeoutMu.Lock()
+	if n.disputeVoters[key] == nil {
+		n.disputeVoters[key] = make(map[peer.ID]bool)
+	}
+	n.disputeVoters[key][from] = true
+	disputes := len(n.disputeVoters[key])
+	n.timeoutMu.Unlock()
+
+	if disputes < n.majority() {
+		return
+	}
+
+	// Mayoría disputó: verificar firma y procesar el valor como llegada normal.
+	n.timeoutMu.Lock()
+	delete(n.timeoutVotes, key)
+	n.timeoutMu.Unlock()
+
+	switch phase {
+	case "commit2":
+		var msg protocol.Commit2Msg
+		if err := json.Unmarshal(value, &msg); err != nil {
+			return
+		}
+		if !n.verifySignedMsg("commit2", target, msg.AuthorID, msg.Hash, msg.Signature) {
+			return
+		}
+		n.storeSignedMsg("commit2", target, value)
+		fmt.Printf("[timeout] commit2 de %s aceptado por disputa de mayoría\n", target.ShortString())
+		n.dcr.HandleCommit2(target, msg.Hash)
+		n.tryStartReveal1(ctx)
+	case "reveal1":
+		var msg protocol.Reveal1Msg
+		if err := json.Unmarshal(value, &msg); err != nil {
+			return
+		}
+		if !n.verifySignedMsg("reveal1", target, msg.AuthorID, msg.Hash, msg.Signature) {
+			return
+		}
+		valid, allReady := n.dcr.HandleReveal1(target, msg.Hash)
+		if !valid {
+			return
+		}
+		n.storeSignedMsg("reveal1", target, value)
+		fmt.Printf("[timeout] reveal1 de %s aceptado por disputa de mayoría\n", target.ShortString())
+		if allReady || n.dcr.Reveal1Count() >= n.effectiveSize() {
+			n.logRevealOrder()
+			n.triggerReveal2IfFirst(ctx)
+		}
+	case "reveal2":
+		var msg protocol.Reveal2Msg
+		if err := json.Unmarshal(value, &msg); err != nil {
+			return
+		}
+		if !n.verifySignedMsg("reveal2", target, msg.AuthorID, msg.Secret, msg.Signature) {
+			return
+		}
+		if !n.dcr.HandleReveal2(target, msg.Secret) {
+			return
+		}
+		n.storeSignedMsg("reveal2", target, value)
+		fmt.Printf("[timeout] reveal2 de %s aceptado por disputa de mayoría\n", target.ShortString())
+		if n.dcr.MyTurnAfter(target) {
+			if err := n.publishReveal2(ctx); err != nil {
+				fmt.Printf("[dcr] error publicando reveal2: %v\n", err)
+			}
+		}
+		next := n.nextPendingReveal2Peer(target)
+		stopTimer(n.reveal2Timer)
+		n.startReveal2TimerFor(ctx, next)
+		n.tryStartVDF(ctx)
+	}
+}
+
+// abortPeer marca un peer como abortado en una fase y reacciona según la fase.
+func (n *Node) abortPeer(ctx context.Context, target peer.ID, phase string) {
+	n.timeoutMu.Lock()
+	if _, already := n.abortedPeers[target]; already {
+		n.timeoutMu.Unlock()
+		return
+	}
+	n.abortedPeers[target] = phase
+	n.timeoutMu.Unlock()
+
+	fmt.Printf("[timeout] %s%s abortado en fase %s (mayoría)%s\n", ansiRed, target.ShortString(), phase, ansiReset)
+
+	switch phase {
+	case "commit2":
+		n.tryStartReveal1(ctx)
+	case "reveal1":
+		n.tryComputeRevealOrderAndProceed(ctx)
+	case "reveal2":
+		stopTimer(n.reveal2Timer)
+		if n.dcr.MyTurnAfter(target) {
+			if err := n.publishReveal2(ctx); err != nil {
+				fmt.Printf("[dcr] error publicando reveal2 tras aborto: %v\n", err)
+			}
+		}
+		next := n.nextPendingReveal2Peer(target)
+		n.startReveal2TimerFor(ctx, next)
+		n.tryStartVDF(ctx)
+	}
+}

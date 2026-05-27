@@ -19,10 +19,14 @@ import (
 
 func main() {
 	// Definimos los flags de línea de comandos usando el paquete estándar "flag".
-	portFlag := flag.Int("port", 0, "Puerto TCP a escuchar (0 = asignado automáticamente)")
-	peersFlag := flag.String("peer", "", "Multiaddrs de bootstrap separados por comas")
-	pingFlag := flag.Bool("ping", false, "Enviar Ping a todos los peers cada 5 segundos")
-	vdfTFlag := flag.Int("vdf-t", 1000, "Número de iteraciones (T) para la VDF de Wesolowski")
+	portFlag          := flag.Int("port", 0, "Puerto TCP a escuchar (0 = asignado automáticamente)")
+	peersFlag         := flag.String("peer", "", "Multiaddrs de bootstrap separados por comas")
+	pingFlag          := flag.Bool("ping", false, "Enviar Ping a todos los peers cada 5 segundos")
+	vdfTFlag          := flag.Int("vdf-t", 1000, "Número de iteraciones (T) para la VDF de Wesolowski")
+	timeoutFlag       := flag.Duration("timeout", 0, "Timeout para todas las fases (ej: 500ms, 2s); si >0 sobreescribe los flags individuales")
+	timeoutCommitFlag  := flag.Duration("timeout-commit",  time.Second, "Timeout fase commit2")
+	timeoutReveal1Flag := flag.Duration("timeout-reveal1", time.Second, "Timeout fase reveal1")
+	timeoutReveal2Flag := flag.Duration("timeout-reveal2", time.Second, "Timeout por nodo en reveal2")
 	flag.Parse()
 
 	cfg := node.DefaultConfig()
@@ -30,6 +34,15 @@ func main() {
 	cfg.VDFT = *vdfTFlag
 	if *peersFlag != "" {
 		cfg.BootstrapPeers = strings.Split(*peersFlag, ",")
+	}
+	if *timeoutFlag > 0 {
+		cfg.TimeoutCommit = *timeoutFlag
+		cfg.TimeoutReveal1 = *timeoutFlag
+		cfg.TimeoutReveal2 = *timeoutFlag
+	} else {
+		cfg.TimeoutCommit = *timeoutCommitFlag
+		cfg.TimeoutReveal1 = *timeoutReveal1Flag
+		cfg.TimeoutReveal2 = *timeoutReveal2Flag
 	}
 
 	// Creamos el nodo (genera identidad, crea el host libp2p).

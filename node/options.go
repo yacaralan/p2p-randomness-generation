@@ -3,6 +3,8 @@
 // es un nodo independiente con su propia identidad y conjunto de conexiones.
 package node
 
+import "time"
+
 // Config contiene toda la configuración de un nodo.
 // Separar la configuración del código de inicialización permite:
 //   - Cambiar la configuración sin tocar la lógica del nodo
@@ -29,15 +31,30 @@ type Config struct {
 	// Controla el delay secuencial Δ. Valores orientativos: 1000 (demo rápido),
 	// 100000+ (experimentos con delays medibles).
 	VDFT int
+
+	// TimeoutCommit es el tiempo máximo para esperar todos los commit2 tras SESSION_LOCK.
+	// 0 = sin timeout (espera indefinida).
+	TimeoutCommit time.Duration
+
+	// TimeoutReveal1 es el tiempo máximo para esperar todos los reveal1 tras publicar el propio.
+	// 0 = sin timeout.
+	TimeoutReveal1 time.Duration
+
+	// TimeoutReveal2 es el tiempo máximo por nodo en la fase reveal2 (se reinicia tras cada reveal).
+	// 0 = sin timeout.
+	TimeoutReveal2 time.Duration
 }
 
 // DefaultConfig devuelve una Config con valores razonables para desarrollo:
-// puerto aleatorio (Port=0) y sin peers de bootstrap manuales.
+// puerto aleatorio (Port=0), sin peers de bootstrap manuales, timeouts de 1s.
 // mDNS se encargará de encontrar peers automáticamente en la red local.
 func DefaultConfig() Config {
 	return Config{
 		Port:           0,
 		BootstrapPeers: nil,
 		VDFT:           1000,
+		TimeoutCommit:  time.Second,
+		TimeoutReveal1: time.Second,
+		TimeoutReveal2: time.Second,
 	}
 }

@@ -293,11 +293,161 @@ func (d *DoubleCommitReveal) SelfID() peer.ID {
 	return d.self
 }
 
+// CommitPeers devuelve el conjunto de peers que enviaron commit2.
+func (d *DoubleCommitReveal) CommitPeers() map[peer.ID]bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	set := make(map[peer.ID]bool, len(d.commit2s))
+	for id := range d.commit2s {
+		set[id] = true
+	}
+	return set
+}
+
+// Reveal1Peers devuelve el conjunto de peers con reveal1 verificado.
+func (d *DoubleCommitReveal) Reveal1Peers() map[peer.ID]bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	set := make(map[peer.ID]bool, len(d.reveal1s))
+	for id := range d.reveal1s {
+		set[id] = true
+	}
+	return set
+}
+
+// GetPhaseValue devuelve el valor que tiene un peer en la fase indicada
+// ("commit2", "reveal1", "reveal2"). Devuelve (nil, false) si no existe.
+func (d *DoubleCommitReveal) GetPhaseValue(phase string, id peer.ID) ([]byte, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var m map[peer.ID][]byte
+	switch phase {
+	case "commit2":
+		m = d.commit2s
+	case "reveal1":
+		m = d.reveal1s
+	case "reveal2":
+		m = d.reveal2s
+	default:
+		return nil, false
+	}
+	v, ok := m[id]
+	if !ok {
+		return nil, false
+	}
+	return clone(v), true
+}
+
 // Commit2Count devuelve cuántos commit2 se han recibido (incluido el propio).
 func (d *DoubleCommitReveal) Commit2Count() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return len(d.commit2s)
+}
+
+// Reveal1Count devuelve cuántos reveal1 verificados se han recibido (incluido el propio).
+func (d *DoubleCommitReveal) Reveal1Count() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.reveal1s)
+}
+
+// Reveal2CountExcluding devuelve cuántos reveal2 se han recibido excluyendo los peers del set dado.
+func (d *DoubleCommitReveal) Reveal2CountExcluding(excluded map[peer.ID]bool) int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	count := 0
+	for id := range d.reveal2s {
+		if !excluded[id] {
+			count++
+		}
+	}
+	return count
+}
+
+// ComputeRevealOrderExcluding calcula el orden de reveal2 ignorando los peers en excluded.
+func (d *DoubleCommitReveal) ComputeRevealOrderExcluding(excluded map[peer.ID]bool) []peer.ID {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	type entry struct {
+		id peer.ID
+		r  []byte
+	}
+	entries := make([]entry, 0, len(d.reveal1s))
+	for id, r := range d.reveal1s {
+		if !excluded[id] {
+			entries = append(entries, entry{id, r})
+		}
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		bi := new(big.Int).SetBytes(entries[i].r)
+		bj := new(big.Int).SetBytes(entries[j].r)
+		return bi.Cmp(bj) > 0
+	})
+
+	h := sha256.New()
+	for _, e := range entries {
+		h.Write(e.r)
+	}
+	omega := h.Sum(nil)
+	omegaInt := new(big.Int).SetBytes(omega)
+
+	type peerDist struct {
+		id   peer.ID
+		dist []byte
+	}
+	dists := make([]peerDist, 0, len(d.commit2s))
+	for id, c := range d.commit2s {
+		if excluded[id] {
+			continue
+		}
+		cInt := new(big.Int).SetBytes(c)
+		diff := new(big.Int).Abs(new(big.Int).Sub(omegaInt, cInt))
+		di := sha256hash(diff.Bytes())
+		d.revealDist[id] = di
+		dists = append(dists, peerDist{id, di})
+	}
+
+	sort.Slice(dists, func(i, j int) bool {
+		bi := new(big.Int).SetBytes(dists[i].dist)
+		bj := new(big.Int).SetBytes(dists[j].dist)
+		return bi.Cmp(bj) > 0
+	})
+
+	order := make([]peer.ID, len(dists))
+	for i, pd := range dists {
+		order[i] = pd.id
+	}
+	d.revealOrder = order
+	return order
+}
+
+// FinalInputWithFallback devuelve el input a la VDF usando reveal1 como fallback
+// para los peers en useReveal1 (abortados en reveal2).
+func (d *DoubleCommitReveal) FinalInputWithFallback(useReveal1 map[peer.ID]bool) ([]byte, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.revealOrder) == 0 {
+		return nil, false
+	}
+	buf := make([]byte, 0, len(d.revealOrder)*valueSize)
+	for _, id := range d.revealOrder {
+		if useReveal1[id] {
+			r, ok := d.reveal1s[id]
+			if !ok {
+				return nil, false
+			}
+			buf = append(buf, r...)
+		} else {
+			s, ok := d.reveal2s[id]
+			if !ok {
+				return nil, false
+			}
+			buf = append(buf, s...)
+		}
+	}
+	return buf, true
 }
 
 // Reset limpia todo el estado del protocolo para permitir una nueva ronda.
