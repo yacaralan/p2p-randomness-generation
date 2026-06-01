@@ -209,9 +209,17 @@ func (n *Node) handleTimeoutDispute(ctx context.Context, from peer.ID, phase str
 		if !n.verifySignedMsg("commit2", target, msg.AuthorID, msg.Hash, msg.Signature) {
 			return
 		}
+		accepted, equivocated := n.dcr.HandleCommit2(target, msg.Hash)
+		if equivocated {
+			firstSigned, _ := n.getSignedMsg("commit2", target)
+			n.broadcastEquivocationAbort(ctx, "commit2", target, firstSigned, value)
+			return
+		}
+		if !accepted {
+			return
+		}
 		n.storeSignedMsg("commit2", target, value)
 		fmt.Printf("[timeout] commit2 de %s aceptado por disputa de mayoría\n", target.ShortString())
-		n.dcr.HandleCommit2(target, msg.Hash)
 		n.tryStartReveal1(ctx)
 	case "reveal1":
 		var msg protocol.Reveal1Msg
@@ -221,7 +229,12 @@ func (n *Node) handleTimeoutDispute(ctx context.Context, from peer.ID, phase str
 		if !n.verifySignedMsg("reveal1", target, msg.AuthorID, msg.Hash, msg.Signature) {
 			return
 		}
-		valid, allReady := n.dcr.HandleReveal1(target, msg.Hash)
+		valid, allReady, equivocated := n.dcr.HandleReveal1(target, msg.Hash)
+		if equivocated {
+			firstSigned, _ := n.getSignedMsg("reveal1", target)
+			n.broadcastEquivocationAbort(ctx, "reveal1", target, firstSigned, value)
+			return
+		}
 		if !valid {
 			return
 		}
@@ -239,7 +252,13 @@ func (n *Node) handleTimeoutDispute(ctx context.Context, from peer.ID, phase str
 		if !n.verifySignedMsg("reveal2", target, msg.AuthorID, msg.Secret, msg.Signature) {
 			return
 		}
-		if !n.dcr.HandleReveal2(target, msg.Secret) {
+		accepted, equivocated := n.dcr.HandleReveal2(target, msg.Secret)
+		if equivocated {
+			firstSigned, _ := n.getSignedMsg("reveal2", target)
+			n.broadcastEquivocationAbort(ctx, "reveal2", target, firstSigned, value)
+			return
+		}
+		if !accepted {
 			return
 		}
 		n.storeSignedMsg("reveal2", target, value)
@@ -284,4 +303,27 @@ func (n *Node) abortPeer(ctx context.Context, target peer.ID, phase string) {
 		n.startReveal2TimerFor(ctx, next)
 		n.tryStartVDF(ctx)
 	}
+}
+
+// handleEquivocationAbort verifica una prueba de equivocación y aborta al peer si es válida.
+// La prueba es autoevidente: contiene dos mensajes firmados por el mismo peer con valores distintos.
+// No requiere votación por mayoría — cualquier nodo puede verificarla independientemente.
+func (n *Node) handleEquivocationAbort(ctx context.Context, phase string, target peer.ID, first, second []byte) {
+	if n.isAborted(target) {
+		return
+	}
+	firstAuthor, firstValue, firstSig, ok := extractPhaseValue(phase, first)
+	if !ok || !n.verifySignedMsg(phase, target, firstAuthor, firstValue, firstSig) {
+		return
+	}
+	secondAuthor, secondValue, secondSig, ok := extractPhaseValue(phase, second)
+	if !ok || !n.verifySignedMsg(phase, target, secondAuthor, secondValue, secondSig) {
+		return
+	}
+	if string(firstValue) == string(secondValue) {
+		return
+	}
+	fmt.Printf("[equivocación] %sPRUEBA VERIFICADA%s: %s equivocó en fase %s — abortando\n",
+		ansiRed, ansiReset, target.ShortString(), phase)
+	n.abortPeer(ctx, target, phase)
 }

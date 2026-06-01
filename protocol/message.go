@@ -28,8 +28,9 @@ const (
 	ControlReadyAck      = ControlAction("READY_ACK")
 	ControlSessionLock   = ControlAction("SESSION_LOCK")
 	ControlReset         = ControlAction("RESET")
-	ControlTimeoutVote    = ControlAction("TIMEOUT_VOTE")
-	ControlTimeoutDispute = ControlAction("TIMEOUT_DISPUTE")
+	ControlTimeoutVote       = ControlAction("TIMEOUT_VOTE")
+	ControlTimeoutDispute    = ControlAction("TIMEOUT_DISPUTE")
+	ControlEquivocationAbort = ControlAction("EQUIVOCATION_ABORT")
 )
 
 // TimeoutVotePayload es el payload de un voto de timeout para un peer en una fase.
@@ -43,6 +44,15 @@ type TimeoutDisputePayload struct {
 	Phase  string `json:"phase"`
 	Target string `json:"target"`
 	Value  []byte `json:"value"`
+}
+
+// EquivocationProofPayload lleva las dos firmas del nodo equivocador como prueba.
+// Cualquier nodo puede verificarlas independientemente sin necesidad de votación.
+type EquivocationProofPayload struct {
+	Phase  string `json:"phase"`
+	Target string `json:"target"`
+	First  []byte `json:"first"`  // JSON del primer mensaje firmado (ya aceptado)
+	Second []byte `json:"second"` // JSON del segundo mensaje firmado (con valor distinto)
 }
 
 // Message es el formato genérico para los streams directos (Ping/Pong/Chat).

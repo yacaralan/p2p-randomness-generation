@@ -1,10 +1,13 @@
 package node
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
+
+	"github.com/ayacar/p2p-randomness-generation/protocol"
 )
 
 // signingBytes construye los bytes canónicos a firmar: phase || peerID || value.
@@ -37,6 +40,32 @@ func (n *Node) pubKeyFor(id peer.ID) (crypto.PubKey, error) {
 		return nil, fmt.Errorf("clave pública de %s no disponible", id.ShortString())
 	}
 	return pk, nil
+}
+
+// extractPhaseValue parsea el JSON de un mensaje firmado y extrae (authorID, value, signature)
+// según la fase. Devuelve ok=false si el JSON es inválido o la fase no es reconocida.
+func extractPhaseValue(phase string, data []byte) (authorID string, value, sig []byte, ok bool) {
+	switch phase {
+	case "commit2":
+		var m protocol.Commit2Msg
+		if err := json.Unmarshal(data, &m); err != nil {
+			return
+		}
+		return m.AuthorID, m.Hash, m.Signature, true
+	case "reveal1":
+		var m protocol.Reveal1Msg
+		if err := json.Unmarshal(data, &m); err != nil {
+			return
+		}
+		return m.AuthorID, m.Hash, m.Signature, true
+	case "reveal2":
+		var m protocol.Reveal2Msg
+		if err := json.Unmarshal(data, &m); err != nil {
+			return
+		}
+		return m.AuthorID, m.Secret, m.Signature, true
+	}
+	return
 }
 
 // verifySignedMsg verifica que authorIDStr == target y que la firma es válida para (phase, value).

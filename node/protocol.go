@@ -85,6 +85,17 @@ func (n *Node) wireDoubleCommitReveal(ctx context.Context) error {
 				return
 			}
 			n.handleTimeoutDispute(ctx, from, p.Phase, target, p.Value)
+
+		case protocol.ControlEquivocationAbort:
+			var p protocol.EquivocationProofPayload
+			if err := json.Unmarshal([]byte(payload), &p); err != nil {
+				return
+			}
+			target, err := peer.Decode(p.Target)
+			if err != nil {
+				return
+			}
+			n.handleEquivocationAbort(ctx, p.Phase, target, p.First, p.Second)
 		}
 	}); err != nil {
 		return err
@@ -97,10 +108,18 @@ func (n *Node) wireDoubleCommitReveal(ctx context.Context) error {
 		if !n.verifySignedMsg("commit2", from, msg.AuthorID, msg.Hash, msg.Signature) {
 			return
 		}
-		data, _ := json.Marshal(msg)
-		n.storeSignedMsg("commit2", from, data)
+		newData, _ := json.Marshal(msg)
+		accepted, equivocated := n.dcr.HandleCommit2(from, msg.Hash)
+		if equivocated {
+			firstSigned, _ := n.getSignedMsg("commit2", from)
+			n.broadcastEquivocationAbort(ctx, "commit2", from, firstSigned, newData)
+			return
+		}
+		if !accepted {
+			return // duplicado exacto, ignorar
+		}
+		n.storeSignedMsg("commit2", from, newData)
 		fmt.Printf("[dcr] commit2 recibido de %s\n", from.ShortString())
-		n.dcr.HandleCommit2(from, msg.Hash)
 		n.tryStartReveal1(ctx)
 	}); err != nil {
 		return err
@@ -113,14 +132,19 @@ func (n *Node) wireDoubleCommitReveal(ctx context.Context) error {
 		if !n.verifySignedMsg("reveal1", from, msg.AuthorID, msg.Hash, msg.Signature) {
 			return
 		}
-		valid, allReady := n.dcr.HandleReveal1(from, msg.Hash)
+		newData, _ := json.Marshal(msg)
+		valid, allReady, equivocated := n.dcr.HandleReveal1(from, msg.Hash)
+		if equivocated {
+			firstSigned, _ := n.getSignedMsg("reveal1", from)
+			n.broadcastEquivocationAbort(ctx, "reveal1", from, firstSigned, newData)
+			return
+		}
 		if !valid {
 			fmt.Printf("[dcr] %sERROR:%s reveal1 de %s inválido (hash no coincide con commit2)\n",
 				ansiRed, ansiReset, from.ShortString())
 			return
 		}
-		data, _ := json.Marshal(msg)
-		n.storeSignedMsg("reveal1", from, data)
+		n.storeSignedMsg("reveal1", from, newData)
 		fmt.Printf("[dcr] reveal1 de %s verificado correctamente\n", from.ShortString())
 		if allReady || n.dcr.Reveal1Count() >= n.effectiveSize() {
 			n.logRevealOrder()
@@ -137,13 +161,19 @@ func (n *Node) wireDoubleCommitReveal(ctx context.Context) error {
 		if !n.verifySignedMsg("reveal2", from, msg.AuthorID, msg.Secret, msg.Signature) {
 			return
 		}
-		if !n.dcr.HandleReveal2(from, msg.Secret) {
+		newData, _ := json.Marshal(msg)
+		accepted, equivocated := n.dcr.HandleReveal2(from, msg.Secret)
+		if equivocated {
+			firstSigned, _ := n.getSignedMsg("reveal2", from)
+			n.broadcastEquivocationAbort(ctx, "reveal2", from, firstSigned, newData)
+			return
+		}
+		if !accepted {
 			fmt.Printf("[dcr] %sERROR:%s reveal2 de %s inválido (H(secret) no coincide con reveal1)\n",
 				ansiRed, ansiReset, from.ShortString())
 			return
 		}
-		data, _ := json.Marshal(msg)
-		n.storeSignedMsg("reveal2", from, data)
+		n.storeSignedMsg("reveal2", from, newData)
 		fmt.Printf("[dcr] reveal2 de %s verificado correctamente\n", from.ShortString())
 		if n.dcr.MyTurnAfter(from) {
 			if err := n.publishReveal2(ctx); err != nil {
@@ -257,14 +287,14 @@ func (n *Node) signAndPublishCommit2(ctx context.Context, hash []byte) error {
 }
 
 // signAndPublishReveal1 firma hash con la clave propia y lo publica como Reveal1Msg.
-func (n *Node) signAndPublishReveal1(ctx context.Context, hash []byte) error {
-	sig, err := signValue(n.privKey, "reveal1", n.host.ID(), hash)
+func (n *Node) signAndPublishReveal1(ctx context.Context, reveal1Value []byte) error {
+	sig, err := signValue(n.privKey, "reveal1", n.host.ID(), reveal1Value)
 	if err != nil {
 		return fmt.Errorf("firmar reveal1: %w", err)
 	}
 	msg := protocol.Reveal1Msg{
 		AuthorID:  n.host.ID().String(),
-		Hash:      hash,
+		Hash:      reveal1Value,
 		Signature: sig,
 	}
 	data, _ := json.Marshal(msg)
@@ -286,6 +316,22 @@ func (n *Node) signAndPublishReveal2(ctx context.Context, secret []byte) error {
 	data, _ := json.Marshal(msg)
 	n.storeSignedMsg("reveal2", n.host.ID(), data)
 	return n.pubSub.PublishReveal2(ctx, msg)
+}
+
+// broadcastEquivocationAbort publica una prueba de equivocación en el topic de control.
+// first y second son los JSON de los dos mensajes firmados con valores distintos del mismo peer.
+func (n *Node) broadcastEquivocationAbort(ctx context.Context, phase string, target peer.ID, first, second []byte) {
+	fmt.Printf("[equivocación] %sEQUIVOCACIÓN DETECTADA%s: %s en fase %s — difundiendo prueba\n",
+		ansiRed, ansiReset, target.ShortString(), phase)
+	payload, _ := json.Marshal(protocol.EquivocationProofPayload{
+		Phase:  phase,
+		Target: target.String(),
+		First:  first,
+		Second: second,
+	})
+	if err := n.pubSub.PublishControlWithPayload(ctx, protocol.ControlEquivocationAbort, string(payload)); err != nil {
+		fmt.Printf("[equivocación] error publicando prueba: %v\n", err)
+	}
 }
 
 // tryComputeRevealOrderAndProceed fuerza el cálculo del orden de reveal2

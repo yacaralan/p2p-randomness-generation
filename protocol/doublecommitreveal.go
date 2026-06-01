@@ -71,10 +71,16 @@ func (d *DoubleCommitReveal) StartCommit2() ([]byte, error) {
 }
 
 // HandleCommit2 registra el segundo commit recibido de un peer.
-func (d *DoubleCommitReveal) HandleCommit2(from peer.ID, hash []byte) {
+// Devuelve (accepted=true) si es la primera vez; (equivocated=true) si ya había
+// un valor distinto almacenado para este peer.
+func (d *DoubleCommitReveal) HandleCommit2(from peer.ID, hash []byte) (accepted, equivocated bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if existing, ok := d.commit2s[from]; ok {
+		return false, string(existing) != string(hash)
+	}
 	d.commit2s[from] = clone(hash)
+	return true, false
 }
 
 // StartReveal1 devuelve r_i para que el caller lo publique.
@@ -92,23 +98,26 @@ func (d *DoubleCommitReveal) StartReveal1() (r []byte, allReady bool, err error)
 }
 
 // HandleReveal1 verifica que H(r_j) == c_j y guarda r_j.
-// Devuelve (valid, allReady): valid indica si el reveal fue correcto,
-// allReady indica si ya se tienen todos los reveal1 esperados.
-func (d *DoubleCommitReveal) HandleReveal1(from peer.ID, hash []byte) (valid, allReady bool) {
+// Devuelve (valid, allReady, equivocated): valid indica si el reveal fue correcto,
+// allReady si ya se tienen todos los reveal1 esperados, equivocated si ya había
+// un reveal1 distinto almacenado para este peer.
+func (d *DoubleCommitReveal) HandleReveal1(from peer.ID, hash []byte) (valid, allReady, equivocated bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
+	if existing, ok := d.reveal1s[from]; ok {
+		return false, false, string(existing) != string(hash)
+	}
 	expected, ok := d.commit2s[from]
 	if !ok {
-		return false, false
+		return false, false, false
 	}
-	computed := sha256hash(hash)
-	if string(computed) != string(expected) {
-		return false, false
+	if string(sha256hash(hash)) != string(expected) {
+		return false, false, false
 	}
 	d.reveal1s[from] = clone(hash)
 	allReady = len(d.reveal1s) == len(d.commit2s)
-	return true, allReady
+	return true, allReady, false
 }
 
 // ComputeRevealOrder calcula el orden de reveal2 y lo almacena internamente.
@@ -273,19 +282,24 @@ func (d *DoubleCommitReveal) FinalInput() ([]byte, bool) {
 }
 
 // HandleReveal2 verifica que H(s_j) == r_j y guarda s_j.
-func (d *DoubleCommitReveal) HandleReveal2(from peer.ID, secret []byte) bool {
+// Devuelve (accepted, equivocated): accepted indica si fue guardado correctamente,
+// equivocated si ya había un secreto distinto almacenado para este peer.
+func (d *DoubleCommitReveal) HandleReveal2(from peer.ID, secret []byte) (accepted, equivocated bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
+	if existing, ok := d.reveal2s[from]; ok {
+		return false, string(existing) != string(secret)
+	}
 	expected, ok := d.reveal1s[from]
 	if !ok {
-		return false
+		return false, false
 	}
 	if string(sha256hash(secret)) != string(expected) {
-		return false
+		return false, false
 	}
 	d.reveal2s[from] = clone(secret)
-	return true
+	return true, false
 }
 
 // SelfID expone el peer.ID propio (útil para el caller al mostrar /order).
