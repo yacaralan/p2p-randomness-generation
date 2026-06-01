@@ -1,0 +1,38 @@
+node/signing.go
+  s_c8c067364d7fba::t_72528ef87c345e 45-70
+  s_c8c067364d7fba::t_b66747b720dd3a 4,9-10
+protocol/doublecommitreveal.go
+  s_c8c067364d7fba::t_7ed280e58235f2 285-287,291-293,296,299,302
+  s_c8c067364d7fba::t_4c1383de0759ed 74-76,79-81,83
+  s_c8c067364d7fba::t_8c0cfd6966b77e 101-104,108-110,113,115-116,120
+node/timeout.go
+  s_c8c067364d7fba::t_7e4f6f4180a540 218,220,261
+  s_c8c067364d7fba::t_1f2f5cd3778f5a 324-325
+  s_c8c067364d7fba::t_1a69fc3f868d83 212-217,219,232-237,255-258
+  s_c8c067364d7fba::t_ee91451cfb0ac5 315-316,319-320,323
+  s_c8c067364d7fba::t_dd815b3f1802a7 307-314,317-318,321-322,326-329
+node/protocol.go
+  s_c8c067364d7fba::t_86dc7fc8a4a6e7 111-121,135-141,147,164-171,176
+  s_c8c067364d7fba::t_a1465a62949deb 321-336
+  s_c8c067364d7fba::t_42337fd05a31e5 290-291,297
+  s_c8c067364d7fba::t_c36ebf285246ae 88-98
+protocol/message.go
+  s_c8c067364d7fba::t_fa618d49f31159 31-33
+  s_c8c067364d7fba::t_e4687c3a196638 49-57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "a77ff21fc11a95239d4ba31bc3fecf65863f1327",
+  "prompts": {},
+  "sessions": {
+    "s_c8c067364d7fba": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "28f27bab-2ef2-4dc7-8f4d-a28a8b4e9ebf",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Alan Yacar <alanroyyacar@gmail.com>"
+    }
+  }
+}
