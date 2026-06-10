@@ -1,0 +1,85 @@
+README.md
+  s_e9ca656cd95e0b::t_d2326e65861c7e 28
+  s_d181210963dea7::t_b6cbc0340c82fa 153-154
+  s_356e13c19e5fd1::t_60f9485e8e4552 194-206,208-233,238-239
+  h_c2303171a42e2d 129,207
+  s_d181210963dea7::t_875011dd37cc74 189,191
+  s_e9ca656cd95e0b::t_916f399d93a151 115-128,130-144,146-152,155-188,190,192-193
+  s_d181210963dea7::t_d486c628bac4c2 145
+  s_e9ca656cd95e0b::t_e1e33f9dc5b4c3 29
+  s_d181210963dea7::t_cf7c6353559b5e 243
+  s_99604d38b18d22::t_cc7f2e28354441 248
+node/node.go
+  s_e9ca656cd95e0b::t_fb137a425f38f0 69-70,72-83
+  s_e9ca656cd95e0b::t_117f80f8fb8522 136,138
+  s_e9ca656cd95e0b::t_4a8e7593cc1a9d 137
+  s_e9ca656cd95e0b::t_90fde0f5f06871 115
+  s_e9ca656cd95e0b::t_bb325cdcf80ad3 350-355
+  s_e9ca656cd95e0b::t_061620690f5037 36
+  s_99604d38b18d22::t_8c002801d88195 311-312
+  s_e9ca656cd95e0b::t_3d661e00e216ea 266-270
+  s_e9ca656cd95e0b::t_a70a4491ebba6c 88-91
+  s_99604d38b18d22::t_84d3f4d24fe525 71,313
+  s_e9ca656cd95e0b::t_34293e326cb043 126-127
+  s_e9ca656cd95e0b::t_4f791feb839d7a 23-25
+  s_e9ca656cd95e0b::t_1c1d33c49aa5b4 64
+  s_e9ca656cd95e0b::t_f106819904b7de 53
+  s_d181210963dea7::t_6721d037e2e07c 87
+  s_e9ca656cd95e0b::t_41d1f53b77e561 226,230
+protocol/message.go
+  s_99604d38b18d22::t_84d3f4d24fe525 7-13
+cmd/node/main.go
+  s_99604d38b18d22::t_84d3f4d24fe525 20-25,28-29,31
+  s_99604d38b18d22::t_eff39b2c6537f1 111
+  s_99604d38b18d22::t_c05949d618aef0 294
+  s_356e13c19e5fd1::t_73317ab8c75a59 76-88,93-102,104-109,113-114,117-118,120-121
+  s_e9ca656cd95e0b::t_11792adffb624d 51
+  s_356e13c19e5fd1::t_a75c1509612216 91-92,103
+  s_e9ca656cd95e0b::t_03dab4a92a8a56 41,46
+  s_99604d38b18d22::t_d7f448148d58d4 125-126
+  s_356e13c19e5fd1::t_8e418f793c302d 119
+  s_99604d38b18d22::t_ef481eaf1c2f97 148-149
+  s_99604d38b18d22::t_f48d07f6501f9d 73-74
+  s_356e13c19e5fd1::t_3838e713e47c2c 30
+  s_99604d38b18d22::t_63266e480a48cd 61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "a0ba4fca7970593f88c7e5272eaf14dc1139fe5d",
+  "prompts": {},
+  "sessions": {
+    "s_356e13c19e5fd1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f84c83cd-ad8c-4bb0-88ee-eb08bdaf0301",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Alan Yacar <alanroyyacar@gmail.com>"
+    },
+    "s_99604d38b18d22": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2ffda2ec-e7fb-4b3e-9171-8aeed10a8cbc",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": null
+    },
+    "s_d181210963dea7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cbf5dd51-fa0a-4a0b-8984-01ac4ad621f3",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Alan Yacar <alanroyyacar@gmail.com>"
+    },
+    "s_e9ca656cd95e0b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0b13bcd3-4c54-4505-b6bf-ef9746a0d15d",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Alan Yacar <alanroyyacar@gmail.com>"
+    }
+  }
+}
