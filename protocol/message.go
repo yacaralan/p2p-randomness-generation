@@ -1,33 +1,16 @@
 package protocol
 
-import "github.com/libp2p/go-libp2p/core/protocol"
-
-// ProtocolID identifica el protocolo de generación de aleatoriedad.
-// En libp2p, el protocol ID es el mecanismo de negociación: cuando un nodo
-// abre un stream, le indica al peer remoto qué protocolo quiere hablar.
-// Si el peer no lo soporta, rechaza el stream con un error de protocolo.
-const ProtocolID = protocol.ID("/randomness/1.0.0")
-
-// MessageType identifica el tipo semántico de un mensaje.
-type MessageType string
-
-const (
-	MessageTypePing = MessageType("PING")
-	MessageTypePong = MessageType("PONG")
-	MessageTypeChat = MessageType("CHAT")
-)
-
 // ControlAction identifica una acción a disparar globalmente en todos los nodos.
 type ControlAction string
 
 const (
-	ControlStartCommit2  = ControlAction("START_COMMIT2")
-	ControlStartReveal1  = ControlAction("START_REVEAL1")
-	ControlStartReveal2  = ControlAction("START_REVEAL2")
-	ControlProposeStart  = ControlAction("PROPOSE_START")
-	ControlReadyAck      = ControlAction("READY_ACK")
-	ControlSessionLock   = ControlAction("SESSION_LOCK")
-	ControlReset         = ControlAction("RESET")
+	ControlStartCommit2      = ControlAction("START_COMMIT2")
+	ControlStartReveal1      = ControlAction("START_REVEAL1")
+	ControlStartReveal2      = ControlAction("START_REVEAL2")
+	ControlProposeStart      = ControlAction("PROPOSE_START")
+	ControlReadyAck          = ControlAction("READY_ACK")
+	ControlSessionLock       = ControlAction("SESSION_LOCK")
+	ControlReset             = ControlAction("RESET")
 	ControlTimeoutVote       = ControlAction("TIMEOUT_VOTE")
 	ControlTimeoutDispute    = ControlAction("TIMEOUT_DISPUTE")
 	ControlEquivocationAbort = ControlAction("EQUIVOCATION_ABORT")
@@ -53,13 +36,6 @@ type EquivocationProofPayload struct {
 	Target string `json:"target"`
 	First  []byte `json:"first"`  // JSON del primer mensaje firmado (ya aceptado)
 	Second []byte `json:"second"` // JSON del segundo mensaje firmado (con valor distinto)
-}
-
-// Message es el formato genérico para los streams directos (Ping/Pong/Chat).
-// Se serializa como JSON delimitado por '\n'.
-type Message struct {
-	Type    MessageType `json:"type"`
-	Payload string      `json:"payload"`
 }
 
 // ControlMsg dispara una acción global en todos los nodos.

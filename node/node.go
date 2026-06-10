@@ -20,8 +20,9 @@ import (
 )
 
 const (
-	ansiRed   = "\033[31m"
-	ansiReset = "\033[0m"
+	ansiRed    = "\033[31m"
+	ansiYellow = "\033[33m"
+	ansiReset  = "\033[0m"
 )
 
 type Node struct {
@@ -29,10 +30,10 @@ type Node struct {
 	privKey        crypto.PrivKey
 	discovery      *discovery.MDNSDiscovery
 	localDiscovery *discovery.LocalDiscovery
-	handler        *protocol.Handler
 	pubSub         *protocol.PubSub
 	dcr            *protocol.DoubleCommitReveal
 	config         Config
+	attacker       AttackerBehavior
 
 	vdfMu        sync.Mutex
 	vdfResult    []byte
@@ -49,6 +50,7 @@ type Node struct {
 	reveal1Triggered    bool
 
 	// timers de fase
+	readyTimer         *time.Timer
 	commitTimer        *time.Timer
 	reveal1Timer       *time.Timer
 	reveal2Timer       *time.Timer
@@ -59,14 +61,34 @@ type Node struct {
 	timeoutVotes    map[string]map[peer.ID]bool // "phase:target" → voters
 	disputeVoters   map[string]map[peer.ID]bool // "phase:target" → disputers
 	timeoutDisputes map[string][]byte           // "phase:target" → valor disputado
-	abortedPeers    map[peer.ID]string          // peer → fase donde fue abortado
+	abortedPeers    map[peer.ID]string          // peer → fase donde fue abortado ("ready_ack"|"commit2"|"reveal1"|"reveal2")
 
 	// mensajes firmados por fase, para reenvío en disputas de timeout
 	signedMu   sync.Mutex
 	signedMsgs map[string]map[peer.ID][]byte // "commit2"/"reveal1"/"reveal2" → peer → JSON firmado
+
+	// mensajes pendientes que llegaron antes que su prerequisito (gossipsub no garantiza orden)
+	pendingMu      sync.Mutex
+	pendingReveal1 map[peer.ID]bufferedReveal1
+	pendingReveal2 map[peer.ID]bufferedReveal2
+}
+
+type bufferedReveal1 struct {
+	msg     protocol.Reveal1Msg
+	rawData []byte
+}
+
+type bufferedReveal2 struct {
+	msg     protocol.Reveal2Msg
+	rawData []byte
 }
 
 func New(cfg Config) (*Node, error) {
+	a, err := NewAttacker(cfg.AttackerProfile)
+	if err != nil {
+		return nil, err
+	}
+
 	privKey, _, err := crypto.GenerateKeyPair(crypto.Ed25519, -1)
 	if err != nil {
 		return nil, fmt.Errorf("generar clave Ed25519: %w", err)
@@ -90,6 +112,7 @@ func New(cfg Config) (*Node, error) {
 		host:            h,
 		privKey:         privKey,
 		config:          cfg,
+		attacker:        a,
 		readyPeers:      make(map[peer.ID]bool),
 		timeoutVotes:    make(map[string]map[peer.ID]bool),
 		disputeVoters:   make(map[string]map[peer.ID]bool),
@@ -100,15 +123,18 @@ func New(cfg Config) (*Node, error) {
 			"reveal1": {},
 			"reveal2": {},
 		},
+		pendingReveal1: make(map[peer.ID]bufferedReveal1),
+		pendingReveal2: make(map[peer.ID]bufferedReveal2),
 	}, nil
 }
 
 func (n *Node) Start(ctx context.Context) error {
-	n.handler = protocol.NewHandler(n.host)
-
 	fmt.Printf("[node] PeerID: %s\n", n.host.ID().String())
 	for _, addr := range n.host.Addrs() {
 		fmt.Printf("[node] escuchando en: %s/p2p/%s\n", addr, n.host.ID())
+	}
+	if n.attacker.Name() != "honest" {
+		fmt.Printf("%s[ATACANTE] perfil activo: %s%s\n", ansiYellow, n.attacker.Name(), ansiReset)
 	}
 
 	n.host.Network().Notify(&network.NotifyBundle{
@@ -197,9 +223,11 @@ func (n *Node) peerExchangeLoop(ctx context.Context) {
 
 // Reset limpia todo el estado de sesión y del protocolo para permitir una nueva ronda.
 func (n *Node) Reset() {
+	stopTimer(n.readyTimer)
 	stopTimer(n.commitTimer)
 	stopTimer(n.reveal1Timer)
 	stopTimer(n.reveal2Timer)
+	n.readyTimer = nil
 	n.commitTimer = nil
 	n.reveal1Timer = nil
 	n.reveal2Timer = nil
@@ -234,6 +262,11 @@ func (n *Node) Reset() {
 		"reveal2": {},
 	}
 	n.signedMu.Unlock()
+
+	n.pendingMu.Lock()
+	n.pendingReveal1 = make(map[peer.ID]bufferedReveal1)
+	n.pendingReveal2 = make(map[peer.ID]bufferedReveal2)
+	n.pendingMu.Unlock()
 
 	n.dcr.Reset()
 	fmt.Println("[session] estado reseteado — podés iniciar una nueva ronda con /start")
@@ -275,10 +308,9 @@ func (n *Node) Close() error {
 
 // --- Accessors públicos ---
 
-func (n *Node) Host() host.Host              { return n.host }
-func (n *Node) Handler() *protocol.Handler   { return n.handler }
-func (n *Node) PubSub() *protocol.PubSub     { return n.pubSub }
-func (n *Node) VDFT() int                    { return n.config.VDFT }
+func (n *Node) Host() host.Host          { return n.host }
+func (n *Node) PubSub() *protocol.PubSub { return n.pubSub }
+func (n *Node) VDFT() int                { return n.config.VDFT }
 
 func (n *Node) DoubleCommitReveal() *protocol.DoubleCommitReveal { return n.dcr }
 
@@ -314,4 +346,10 @@ func (n *Node) getSignedMsg(phase string, id peer.ID) ([]byte, bool) {
 // tsMs devuelve el Unix timestamp actual en milisegundos.
 func tsMs() int64 {
 	return time.Now().UnixMilli()
+}
+
+// attackerLogf loguea una acción adversarial con el nombre del perfil activo.
+func (n *Node) attackerLogf(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	fmt.Printf("%s[ATACANTE:%s] %s%s\n", ansiYellow, n.attacker.Name(), msg, ansiReset)
 }

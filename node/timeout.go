@@ -17,10 +17,24 @@ func (n *Node) majority() int {
 	return n.sessionSize/2 + 1
 }
 
+// peerMajority es la mayoría sobre los peers TCP conectados (incluido self). Se usa en la
+// fase ready_ack, donde sessionSize aún no está definido y no puede usarse majority().
+func (n *Node) peerMajority() int {
+	return (len(n.host.Network().Peers())+1)/2 + 1
+}
+
 func (n *Node) effectiveSize() int {
 	n.timeoutMu.Lock()
 	defer n.timeoutMu.Unlock()
-	return n.sessionSize - len(n.abortedPeers)
+	// "ready_ack" aborts ya están excluidos de sessionSize (no aparecen en el payload del SESSION_LOCK),
+	// así que no se restan aquí para evitar doble conteo.
+	postSession := 0
+	for _, phase := range n.abortedPeers {
+		if phase != "ready_ack" {
+			postSession++
+		}
+	}
+	return n.sessionSize - postSession
 }
 
 func (n *Node) abortedSet() map[peer.ID]bool {
@@ -108,6 +122,7 @@ func (n *Node) onCommitTimeout(ctx context.Context) {
 			n.broadcastTimeoutVote(ctx, "commit2", p)
 		}
 	}
+	n.voteFalseTimeout(ctx, "commit2", commitPeers, aborted, participants)
 }
 
 func (n *Node) onReveal1Timeout(ctx context.Context) {
@@ -127,6 +142,7 @@ func (n *Node) onReveal1Timeout(ctx context.Context) {
 			n.broadcastTimeoutVote(ctx, "reveal1", p)
 		}
 	}
+	n.voteFalseTimeout(ctx, "reveal1", reveal1Peers, aborted, participants)
 }
 
 func (n *Node) onReveal2Timeout(ctx context.Context, target peer.ID) {
@@ -135,6 +151,21 @@ func (n *Node) onReveal2Timeout(ctx context.Context, target peer.ID) {
 	}
 	fmt.Printf("[timeout] reveal2 de %s no llegó — emitiendo TIMEOUT_VOTE\n", target.ShortString())
 	n.broadcastTimeoutVote(ctx, "reveal2", target)
+}
+
+// voteFalseTimeout implementa el perfil false-timeout-vote: emite TIMEOUT_VOTE contra los
+// participantes que SÍ respondieron en la fase dada (responded[p]), para forzar disputas.
+// No hace nada con el perfil honesto. Los nodos honestos disputan reenviando el mensaje firmado.
+func (n *Node) voteFalseTimeout(ctx context.Context, phase string, responded, aborted map[peer.ID]bool, participants []peer.ID) {
+	if !n.attacker.ShouldVoteFalseTimeout() {
+		return
+	}
+	for _, p := range participants {
+		if responded[p] && !aborted[p] && p != n.host.ID() {
+			n.attackerLogf("TIMEOUT_VOTE falso contra %s (sí envió %s)", p.ShortString(), phase)
+			n.broadcastTimeoutVote(ctx, phase, p)
+		}
+	}
 }
 
 // --- Broadcast de vote/dispute ---
@@ -163,6 +194,12 @@ func (n *Node) broadcastTimeoutDispute(ctx context.Context, phase string, target
 // --- Handlers de vote/dispute ---
 
 func (n *Node) handleTimeoutVote(ctx context.Context, from peer.ID, phase string, target peer.ID) {
+	// ready_ack usa un mecanismo propio: disputa si recibimos READY_ACK del target.
+	if phase == "ready_ack" {
+		n.handleReadyAckTimeoutVote(ctx, from, target)
+		return
+	}
+
 	if signed, ok := n.getSignedMsg(phase, target); ok {
 		n.broadcastTimeoutDispute(ctx, phase, target, signed)
 	}
@@ -181,6 +218,49 @@ func (n *Node) handleTimeoutVote(ctx context.Context, from peer.ID, phase string
 	}
 }
 
+// handleReadyAckTimeoutVote procesa un TIMEOUT_VOTE para la fase ready_ack.
+// Si tenemos READY_ACK del target, disputamos. Con mayoría de votos, el peer es excluido de la sesión.
+func (n *Node) handleReadyAckTimeoutVote(ctx context.Context, from peer.ID, target peer.ID) {
+	// Dispute: si tenemos READY_ACK del target, lo reenviamos como prueba.
+	n.sessionMu.Lock()
+	_, hasACK := n.readyPeers[target]
+	n.sessionMu.Unlock()
+	if hasACK {
+		// El valor de la disputa es el PeerID del target — la prueba es que
+		// la mayoría de nodos honestos aseguran haberlo recibido (broadcast confiable).
+		n.broadcastTimeoutDispute(ctx, "ready_ack", target, []byte(target))
+	}
+
+	key := fmt.Sprintf("ready_ack:%s", target)
+	n.timeoutMu.Lock()
+	if n.timeoutVotes[key] == nil {
+		n.timeoutVotes[key] = make(map[peer.ID]bool)
+	}
+	n.timeoutVotes[key][from] = true
+	votes := len(n.timeoutVotes[key])
+	n.timeoutMu.Unlock()
+
+	if votes >= n.peerMajority() {
+		n.excludeReadyAckPeer(ctx, target)
+	}
+}
+
+// excludeReadyAckPeer marca un peer como excluido de la sesión por no enviar READY_ACK
+// con mayoría de acuerdo. Reutiliza abortedPeers con phase="ready_ack".
+func (n *Node) excludeReadyAckPeer(ctx context.Context, target peer.ID) {
+	n.timeoutMu.Lock()
+	if _, already := n.abortedPeers[target]; already {
+		n.timeoutMu.Unlock()
+		return
+	}
+	n.abortedPeers[target] = "ready_ack"
+	n.timeoutMu.Unlock()
+
+	fmt.Printf("[session] %s%s excluido de la sesión (sin READY_ACK, mayoría)%s\n",
+		ansiRed, target.ShortString(), ansiReset)
+	n.tryPublishSessionLock(ctx)
+}
+
 func (n *Node) handleTimeoutDispute(ctx context.Context, from peer.ID, phase string, target peer.ID, value []byte) {
 	key := fmt.Sprintf("%s:%s", phase, target)
 	n.timeoutMu.Lock()
@@ -191,16 +271,30 @@ func (n *Node) handleTimeoutDispute(ctx context.Context, from peer.ID, phase str
 	disputes := len(n.disputeVoters[key])
 	n.timeoutMu.Unlock()
 
-	if disputes < n.majority() {
+	majority := n.majority()
+	// ready_ack usa el total de peers conectados como base, no sessionSize.
+	if phase == "ready_ack" {
+		majority = n.peerMajority()
+	}
+
+	if disputes < majority {
 		return
 	}
 
-	// Mayoría disputó: verificar firma y procesar el valor como llegada normal.
+	// Mayoría disputó: limpiar votos y procesar según la fase.
 	n.timeoutMu.Lock()
 	delete(n.timeoutVotes, key)
 	n.timeoutMu.Unlock()
 
 	switch phase {
+	case "ready_ack":
+		// Mayoría asegura haber recibido READY_ACK del target → incluirlo en la sesión.
+		fmt.Printf("[session] READY_ACK de %s aceptado por disputa de mayoría\n", target.ShortString())
+		n.sessionMu.Lock()
+		n.readyPeers[target] = true
+		n.sessionMu.Unlock()
+		n.tryPublishSessionLock(ctx)
+		return
 	case "commit2":
 		var msg protocol.Commit2Msg
 		if err := json.Unmarshal(value, &msg); err != nil {
@@ -240,6 +334,7 @@ func (n *Node) handleTimeoutDispute(ctx context.Context, from peer.ID, phase str
 		}
 		n.storeSignedMsg("reveal1", target, value)
 		fmt.Printf("[timeout] reveal1 de %s aceptado por disputa de mayoría\n", target.ShortString())
+		n.tryFlushReveal2(ctx, target) // procesar reveal2 buffereado si llegó antes que este reveal1
 		if allReady || n.dcr.Reveal1Count() >= n.effectiveSize() {
 			n.logRevealOrder()
 			n.triggerReveal2IfFirst(ctx)

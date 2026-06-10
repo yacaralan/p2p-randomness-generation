@@ -1,0 +1,25 @@
+# Configuración de ejemplo para el launcher de experimentos.
+# Uso: go run ./cmd/launcher --config experiments/example.yaml
+
+# Parámetros de protocolo compartidos por TODOS los nodos.
+protocol:
+  vdf_t: 1000           # iteraciones (T) de la VDF de Wesolowski
+  timeout_ready: 2s     # espera de READY_ACK
+  timeout_commit: 1s    # fase commit2
+  timeout_reveal1: 1s   # fase reveal1
+  timeout_reveal2: 1s   # por nodo en reveal2
+
+discovery_delay: 5s     # ventana para que los nodos se descubran por local-discovery
+max_runtime: 60s        # timeout global de la corrida (apaga todo lo que ocurra primero)
+
+# Composición de la red.
+nodes:
+  honest: 4
+  attackers:
+    - profile: last-revealer-vdf
+      count: 1
+    # Perfiles disponibles: no-ready-ack, commit-invalid, no-commit, equivocate-commit,
+    # no-reveal1, reveal1-invalid, last-revealer-abort, last-revealer-abort-r2,
+    # no-reveal2, reveal2-invalid, last-revealer-vdf, false-timeout-vote
+    # - profile: no-reveal2
+    #   count: 1

@@ -11,22 +11,24 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/libp2p/go-libp2p/core/peer"
-
 	"github.com/ayacar/p2p-randomness-generation/node"
 	"github.com/ayacar/p2p-randomness-generation/protocol"
 )
 
 func main() {
 	// Definimos los flags de línea de comandos usando el paquete estándar "flag".
-	portFlag          := flag.Int("port", 0, "Puerto TCP a escuchar (0 = asignado automáticamente)")
-	peersFlag         := flag.String("peer", "", "Multiaddrs de bootstrap separados por comas")
-	pingFlag          := flag.Bool("ping", false, "Enviar Ping a todos los peers cada 5 segundos")
-	vdfTFlag          := flag.Int("vdf-t", 1000, "Número de iteraciones (T) para la VDF de Wesolowski")
-	timeoutFlag       := flag.Duration("timeout", 0, "Timeout para todas las fases (ej: 500ms, 2s); si >0 sobreescribe los flags individuales")
-	timeoutCommitFlag  := flag.Duration("timeout-commit",  time.Second, "Timeout fase commit2")
+	portFlag := flag.Int("port", 0, "Puerto TCP a escuchar (0 = asignado automáticamente)")
+	peersFlag := flag.String("peer", "", "Multiaddrs de bootstrap separados por comas")
+	vdfTFlag := flag.Int("vdf-t", 1000, "Número de iteraciones (T) para la VDF de Wesolowski")
+	timeoutFlag := flag.Duration("timeout", 0, "Timeout para todas las fases (ej: 500ms, 2s); si >0 sobreescribe los flags individuales")
+	timeoutReadyFlag := flag.Duration("timeout-ready", 2*time.Second, "Timeout esperando READY_ACK de todos los peers")
+	timeoutCommitFlag := flag.Duration("timeout-commit", time.Second, "Timeout fase commit2")
 	timeoutReveal1Flag := flag.Duration("timeout-reveal1", time.Second, "Timeout fase reveal1")
 	timeoutReveal2Flag := flag.Duration("timeout-reveal2", time.Second, "Timeout por nodo en reveal2")
+	attackerFlag := flag.String("attacker", "honest", "Perfil de atacante: honest|no-ready-ack|commit-invalid|no-commit|equivocate-commit|no-reveal1|reveal1-invalid|last-revealer-abort|last-revealer-abort-r2|no-reveal2|reveal2-invalid|last-revealer-vdf|false-timeout-vote")
+	autoStartFlag := flag.Bool("auto-start", false, "Proponer el inicio del protocolo automáticamente tras --auto-start-delay (solo el proponente)")
+	autoStartDelayFlag := flag.Duration("auto-start-delay", 5*time.Second, "Ventana de descubrimiento antes de proponer el inicio (solo con --auto-start)")
+	exitOnVDFFlag := flag.Bool("exit-on-vdf", false, "Apagar el nodo y salir cuando se complete el cómputo de la VDF")
 	flag.Parse()
 
 	cfg := node.DefaultConfig()
@@ -36,14 +38,17 @@ func main() {
 		cfg.BootstrapPeers = strings.Split(*peersFlag, ",")
 	}
 	if *timeoutFlag > 0 {
+		cfg.TimeoutReadyAck = *timeoutFlag
 		cfg.TimeoutCommit = *timeoutFlag
 		cfg.TimeoutReveal1 = *timeoutFlag
 		cfg.TimeoutReveal2 = *timeoutFlag
 	} else {
+		cfg.TimeoutReadyAck = *timeoutReadyFlag
 		cfg.TimeoutCommit = *timeoutCommitFlag
 		cfg.TimeoutReveal1 = *timeoutReveal1Flag
 		cfg.TimeoutReveal2 = *timeoutReveal2Flag
 	}
+	cfg.AttackerProfile = *attackerFlag
 
 	// Creamos el nodo (genera identidad, crea el host libp2p).
 	n, err := node.New(cfg)
@@ -53,7 +58,7 @@ func main() {
 	}
 
 	// Creamos un contexto cancelable. Al llamar cancel(), todas las operaciones
-	// que usen este contexto (Ping, Connect, etc.) se interrumpen inmediatamente.
+	// que usen este contexto (Connect, publicaciones, etc.) se interrumpen inmediatamente.
 	// Esto es necesario para que n.Close() no quede bloqueado esperando que
 	// terminen operaciones de red que ya no tienen sentido completar.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -65,37 +70,60 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Si se activó el flag --ping, lanzamos una goroutine que periódicamente
-	// envía un Ping a todos los peers conectados.
-	// Esto sirve para demostrar visualmente que la comunicación funciona.
-	if *pingFlag {
-		go pingLoop(ctx, n)
+	// commandLoop lee comandos del protocolo desde stdin (modo manual/interactivo).
+	go commandLoop(ctx, n)
+
+	// Si --auto-start, proponemos el inicio del protocolo tras la ventana de
+	// descubrimiento. Solo el nodo proponente recibe este flag desde el launcher.
+	if *autoStartFlag {
+		go func() {
+			select {
+			case <-time.After(*autoStartDelayFlag):
+			case <-ctx.Done():
+				return
+			}
+			if err := n.ProposeStart(ctx); err != nil {
+				fmt.Printf("[auto-start] error: %v\n", err)
+			}
+		}()
 	}
 
-	// Registramos el handler de mensajes de chat entrantes vía gossipsub.
-	if err := n.PubSub().SubscribeChat(ctx, func(from peer.ID, text string) {
-		fmt.Printf("[chat] %s: %s\n", from.ShortString(), text)
-	}); err != nil {
-		cancel()
-		fmt.Fprintf(os.Stderr, "error suscribiéndose a chat: %v\n", err)
-		os.Exit(1)
+	// vdfDone se cierra cuando el nodo debe apagarse por completar la VDF (--exit-on-vdf).
+	vdfDone := make(chan struct{})
+	if *exitOnVDFFlag {
+		go func() {
+			ticker := time.NewTicker(200 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if n.VDFResult() != nil {
+						close(vdfDone)
+						return
+					}
+				}
+			}
+		}()
 	}
 
-	// chatLoop lee mensajes de stdin y los publica vía gossipsub.
-	go chatLoop(ctx, n)
+	fmt.Println("[main] nodo corriendo. Comandos: /start, /peers, /values2, /order, /reset. Ctrl+C para salir.")
 
-	fmt.Println("[main] nodo corriendo. Escribí un mensaje y Enter para enviarlo a todos los peers. Ctrl+C para salir.")
-
-	// Bloqueamos la goroutine principal hasta recibir SIGINT (Ctrl+C) o SIGTERM.
-	// Esto es el patrón estándar en Go para programas de larga duración.
+	// Bloqueamos la goroutine principal hasta recibir SIGINT (Ctrl+C) o SIGTERM,
+	// o hasta que la VDF se complete si --exit-on-vdf está activo.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
+	select {
+	case <-sigCh:
+	case <-vdfDone:
+		fmt.Println("[main] VDF completada, apagando nodo...")
+	}
 
 	fmt.Println("\n[main] apagando nodo...")
 
-	// Primero cancelamos el contexto: interrumpe NewStream y Connect en curso,
-	// y le señala al pingLoop que debe terminar.
+	// Primero cancelamos el contexto: interrumpe Connect y publicaciones en curso,
+	// y le señala a las goroutines (commandLoop, auto-start) que deben terminar.
 	cancel()
 
 	// Cerramos el nodo en una goroutine con un timeout de 5 segundos.
@@ -117,8 +145,8 @@ func main() {
 	}
 }
 
-// chatLoop lee líneas de stdin y las publica en el topic gossipsub de chat.
-func chatLoop(ctx context.Context, n *node.Node) {
+// commandLoop lee comandos del protocolo desde stdin para operar el nodo a mano.
+func commandLoop(ctx context.Context, n *node.Node) {
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
 		select {
@@ -263,38 +291,6 @@ func chatLoop(ctx context.Context, n *node.Node) {
 			}
 			continue
 		}
-		if err := n.PubSub().PublishChat(ctx, text); err != nil {
-			fmt.Printf("[chat] error publicando: %v\n", err)
-		}
-	}
-}
-
-// pingLoop envía un Ping a cada peer conectado cada 5 segundos.
-// Corre en su propia goroutine para no bloquear el hilo principal.
-//
-// n.Host().Network().Peers() devuelve la lista de PeerIDs con los que
-// tenemos una conexión activa en este momento. La lista puede cambiar
-// dinámicamente a medida que peers se conectan y desconectan.
-func pingLoop(ctx context.Context, n *node.Node) {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			peers := n.Host().Network().Peers()
-			if len(peers) == 0 {
-				fmt.Println("[ping] sin peers conectados todavía...")
-				continue
-			}
-			for _, peerID := range peers {
-				if err := n.Handler().Ping(ctx, peerID); err != nil {
-					fmt.Printf("[ping] error enviando ping a %s: %v\n", peerID.ShortString(), err)
-				}
-			}
-		case <-ctx.Done():
-			// El contexto fue cancelado (apagado del nodo), salimos del loop.
-			return
-		}
+		fmt.Printf("[cmd] comando desconocido: %q\n", text)
 	}
 }

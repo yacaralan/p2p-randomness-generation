@@ -6,6 +6,7 @@ require (
 	github.com/harmony-one/vdf v1.0.0
 	github.com/libp2p/go-libp2p v0.39.1
 	github.com/libp2p/go-libp2p-pubsub v0.16.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -116,6 +117,5 @@ require (
 	golang.org/x/text v0.22.0 // indirect
 	golang.org/x/tools v0.29.0 // indirect
 	google.golang.org/protobuf v1.36.4 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	lukechampine.com/blake3 v1.3.0 // indirect
 )

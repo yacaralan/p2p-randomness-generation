@@ -464,6 +464,119 @@ func (d *DoubleCommitReveal) FinalInputWithFallback(useReveal1 map[peer.ID]bool)
 	return buf, true
 }
 
+// HypotheticalRevealOrderWithSelf calcula el orden de reveal2 que resultaría si el
+// nodo local publicara su reveal1 ahora, SIN mutar el estado interno (no escribe
+// revealOrder ni revealDist). Incluye d.myReveal1 para self aunque StartReveal1 no
+// se haya llamado todavía. Excluye los peers en excluded.
+// Retorna (nil, false) si no hay reveal1 propio computado aún.
+//
+// La usa el atacante "last-revealer-abort" para decidir estratégicamente si publicar
+// su reveal1: sólo lo hace si el orden lo dejaría como último en reveal2.
+func (d *DoubleCommitReveal) HypotheticalRevealOrderWithSelf(excluded map[peer.ID]bool) ([]peer.ID, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if d.myReveal1 == nil {
+		return nil, false
+	}
+
+	type entry struct {
+		id peer.ID
+		r  []byte
+	}
+	entries := make([]entry, 0, len(d.reveal1s)+1)
+	for id, r := range d.reveal1s {
+		if !excluded[id] {
+			entries = append(entries, entry{id, r})
+		}
+	}
+	if _, ok := d.reveal1s[d.self]; !ok && !excluded[d.self] {
+		entries = append(entries, entry{d.self, d.myReveal1})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		bi := new(big.Int).SetBytes(entries[i].r)
+		bj := new(big.Int).SetBytes(entries[j].r)
+		return bi.Cmp(bj) > 0
+	})
+
+	h := sha256.New()
+	for _, e := range entries {
+		h.Write(e.r)
+	}
+	omega := h.Sum(nil)
+	omegaInt := new(big.Int).SetBytes(omega)
+
+	type peerDist struct {
+		id   peer.ID
+		dist []byte
+	}
+	dists := make([]peerDist, 0, len(d.commit2s))
+	for id, c := range d.commit2s {
+		if excluded[id] {
+			continue
+		}
+		cInt := new(big.Int).SetBytes(c)
+		diff := new(big.Int).Abs(new(big.Int).Sub(omegaInt, cInt))
+		di := sha256hash(diff.Bytes())
+		dists = append(dists, peerDist{id, di})
+	}
+
+	sort.Slice(dists, func(i, j int) bool {
+		bi := new(big.Int).SetBytes(dists[i].dist)
+		bj := new(big.Int).SetBytes(dists[j].dist)
+		return bi.Cmp(bj) > 0
+	})
+
+	order := make([]peer.ID, len(dists))
+	for i, pd := range dists {
+		order[i] = pd.id
+	}
+	return order, true
+}
+
+// ComputeBothVDFInputs calcula los dos posibles inputs de la VDF que vería un atacante
+// que es el último en revelar en reveal2: ifReveal usa su propio s_i, mientras que
+// ifAbort usa su r_i como fallback (el comportamiento que aplican los nodos honestos
+// cuando un peer aborta en reveal2). Para los demás peers usa s_j (o r_j si están en
+// abortedR2). NO muta estado.
+//
+// Retorna ok=false si falta algún reveal2 ajeno (el nodo aún no es el último) o si no
+// hay secreto/reveal1 propio. La usa el atacante "last-revealer-abort-r2" para elegir
+// la acción que produzca el input numéricamente menor.
+func (d *DoubleCommitReveal) ComputeBothVDFInputs(abortedR2 map[peer.ID]bool) (ifReveal, ifAbort []byte, ok bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if len(d.revealOrder) == 0 || d.mySecret == nil || d.myReveal1 == nil {
+		return nil, nil, false
+	}
+
+	rev := make([]byte, 0, len(d.revealOrder)*valueSize)
+	abo := make([]byte, 0, len(d.revealOrder)*valueSize)
+	for _, id := range d.revealOrder {
+		switch {
+		case id == d.self:
+			rev = append(rev, d.mySecret...)
+			abo = append(abo, d.myReveal1...)
+		case abortedR2[id]:
+			r, okR := d.reveal1s[id]
+			if !okR {
+				return nil, nil, false
+			}
+			rev = append(rev, r...)
+			abo = append(abo, r...)
+		default:
+			s, okS := d.reveal2s[id]
+			if !okS {
+				return nil, nil, false
+			}
+			rev = append(rev, s...)
+			abo = append(abo, s...)
+		}
+	}
+	return rev, abo, true
+}
+
 // Reset limpia todo el estado del protocolo para permitir una nueva ronda.
 func (d *DoubleCommitReveal) Reset() {
 	d.mu.Lock()

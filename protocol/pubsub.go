@@ -11,7 +11,6 @@ import (
 )
 
 const (
-	TopicChat    = "randomness/chat"
 	TopicControl = "randomness/control"
 )
 
@@ -19,13 +18,11 @@ const (
 //
 // Los topics mapean a las fases del protocolo Commit-Reveal²:
 //   - randomness/control:  dispara acciones globales
-//   - randomness/chat:     broadcast de texto para demostración
 //   - randomness/commit2:  cada nodo publica c_i = H(H(s_i))
 //   - randomness/reveal1:  cada nodo publica r_i = H(s_i)
 //   - randomness/reveal2:  cada nodo publica s_i
 type PubSub struct {
 	ps           *pubsub.PubSub
-	chatTopic    *pubsub.Topic
 	controlTopic *pubsub.Topic
 	commit2Topic *pubsub.Topic
 	reveal1Topic *pubsub.Topic
@@ -40,10 +37,6 @@ func NewPubSub(ctx context.Context, h host.Host) (*PubSub, error) {
 		return nil, fmt.Errorf("crear gossipsub: %w", err)
 	}
 
-	chatTopic, err := gs.Join(TopicChat)
-	if err != nil {
-		return nil, fmt.Errorf("unirse a topic %s: %w", TopicChat, err)
-	}
 	controlTopic, err := gs.Join(TopicControl)
 	if err != nil {
 		return nil, fmt.Errorf("unirse a topic %s: %w", TopicControl, err)
@@ -64,52 +57,12 @@ func NewPubSub(ctx context.Context, h host.Host) (*PubSub, error) {
 
 	return &PubSub{
 		ps:           gs,
-		chatTopic:    chatTopic,
 		controlTopic: controlTopic,
 		commit2Topic: commit2Topic,
 		reveal1Topic: reveal1Topic,
 		reveal2Topic: reveal2Topic,
 		localPeerID:  h.ID(),
 	}, nil
-}
-
-// PublishChat publica un mensaje de texto en el topic de chat.
-func (p *PubSub) PublishChat(ctx context.Context, text string) error {
-	msg := Message{Type: MessageTypeChat, Payload: text}
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return fmt.Errorf("serializar mensaje: %w", err)
-	}
-	return p.chatTopic.Publish(ctx, data)
-}
-
-// SubscribeChat se suscribe al topic de chat y llama a handler por cada mensaje recibido.
-// Ignora los mensajes enviados por el propio nodo.
-func (p *PubSub) SubscribeChat(ctx context.Context, handler func(from peer.ID, text string)) error {
-	sub, err := p.chatTopic.Subscribe()
-	if err != nil {
-		return fmt.Errorf("suscribirse a %s: %w", TopicChat, err)
-	}
-	go func() {
-		defer sub.Cancel()
-		for {
-			msg, err := sub.Next(ctx)
-			if err != nil {
-				return
-			}
-			from := peer.ID(msg.GetFrom())
-			if from == p.localPeerID {
-				continue
-			}
-			var m Message
-			if err := json.Unmarshal(msg.Data, &m); err != nil {
-				fmt.Printf("[pubsub] mensaje inválido de %s: %v\n", from.ShortString(), err)
-				continue
-			}
-			handler(from, m.Payload)
-		}
-	}()
-	return nil
 }
 
 // PublishControl dispara una acción global publicándola en randomness/control.
@@ -268,7 +221,6 @@ func (p *PubSub) SubscribeReveal2(ctx context.Context, handler func(from peer.ID
 // MeshPeers devuelve los peers suscritos en cada topic del protocolo.
 func (p *PubSub) MeshPeers() map[string][]peer.ID {
 	return map[string][]peer.ID{
-		TopicChat:    p.chatTopic.ListPeers(),
 		TopicControl: p.controlTopic.ListPeers(),
 		TopicCommit2: p.commit2Topic.ListPeers(),
 		TopicReveal1: p.reveal1Topic.ListPeers(),
@@ -279,7 +231,6 @@ func (p *PubSub) MeshPeers() map[string][]peer.ID {
 // Close libera los topics. El *pubsub.PubSub subyacente se cierra
 // cuando el host libp2p se cierra.
 func (p *PubSub) Close() {
-	p.chatTopic.Close()
 	p.controlTopic.Close()
 	p.commit2Topic.Close()
 	p.reveal1Topic.Close()

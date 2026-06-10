@@ -32,6 +32,11 @@ type Config struct {
 	// 100000+ (experimentos con delays medibles).
 	VDFT int
 
+	// TimeoutReadyAck es el tiempo máximo que el proponente espera READY_ACK de todos los peers.
+	// Al vencer, bloquea la sesión con los peers que respondieron hasta ese momento.
+	// 0 = sin timeout (espera indefinida).
+	TimeoutReadyAck time.Duration
+
 	// TimeoutCommit es el tiempo máximo para esperar todos los commit2 tras SESSION_LOCK.
 	// 0 = sin timeout (espera indefinida).
 	TimeoutCommit time.Duration
@@ -43,6 +48,13 @@ type Config struct {
 	// TimeoutReveal2 es el tiempo máximo por nodo en la fase reveal2 (se reinicia tras cada reveal).
 	// 0 = sin timeout.
 	TimeoutReveal2 time.Duration
+
+	// AttackerProfile especifica el comportamiento adversarial del nodo.
+	// "honest" (o vacío) = comportamiento normal del protocolo.
+	// Perfiles disponibles: no-ready-ack, commit-invalid, no-commit, equivocate-commit,
+	// no-reveal1, reveal1-invalid, last-revealer-abort, last-revealer-abort-r2, no-reveal2,
+	// reveal2-invalid, last-revealer-vdf, false-timeout-vote.
+	AttackerProfile string
 }
 
 // DefaultConfig devuelve una Config con valores razonables para desarrollo:
@@ -50,11 +62,12 @@ type Config struct {
 // mDNS se encargará de encontrar peers automáticamente en la red local.
 func DefaultConfig() Config {
 	return Config{
-		Port:           0,
-		BootstrapPeers: nil,
-		VDFT:           1000,
-		TimeoutCommit:  time.Second,
-		TimeoutReveal1: time.Second,
-		TimeoutReveal2: time.Second,
+		Port:            0,
+		BootstrapPeers:  nil,
+		VDFT:            1000,
+		TimeoutReadyAck: 2 * time.Second,
+		TimeoutCommit:   time.Second,
+		TimeoutReveal1:  time.Second,
+		TimeoutReveal2:  time.Second,
 	}
 }
