@@ -1,0 +1,168 @@
+protocol/doublecommitreveal.go
+  s_d181210963dea7::t_ca799d509a2e7a 467-579
+node/session.go
+  s_e9ca656cd95e0b::t_05d91d6682c1eb 175
+  s_e9ca656cd95e0b::t_a900e4d4d5c854 169
+  s_e9ca656cd95e0b::t_2d17ccbb0166a7 94
+  s_e9ca656cd95e0b::t_1389db54d02b71 209-214
+  s_e9ca656cd95e0b::t_0c75cea65ddc9e 86-87,104,120,160
+  s_e9ca656cd95e0b::t_434077152aaa26 34-35,52-54,56,65-67,74-85,90-93,95-97,99-103,105-111,114-119,121-140,143,150,152,158,161,167-168,170-171,176,180-186,227
+  s_e9ca656cd95e0b::t_ddab7828f0ed22 228-238,242-244
+  s_e9ca656cd95e0b::t_50a1d695cfaf19 55,57-58
+  s_e9ca656cd95e0b::t_feba5ed80c45ff 239-241
+  s_e9ca656cd95e0b::t_bd41b0ad0fdac0 174
+  s_e9ca656cd95e0b::t_4d5a4a39baa80a 144-149,153
+  s_e9ca656cd95e0b::t_9eb87f7089f94e 7
+  s_e9ca656cd95e0b::t_3334ea0c89fa4d 26-30
+  s_e9ca656cd95e0b::t_2af29f3a3e3153 248
+  s_e9ca656cd95e0b::t_76d36a8b97008e 247,249-251,258
+  s_99604d38b18d22::t_a8c4faabe836b4 257
+cmd/launcher/main.go
+  s_356e13c19e5fd1::t_6852ca223627c4 91-98
+  s_356e13c19e5fd1::t_65ca77a382ee12 54-55,59-62
+  s_356e13c19e5fd1::t_2984fe8fd12550 112
+  s_356e13c19e5fd1::t_d65f312a4d2cf2 245-257,259,263,268,272,276-278,282-286,291-293,297
+  s_356e13c19e5fd1::t_95dda6a39cb9ee 227-229
+  s_356e13c19e5fd1::t_3c2072c1776505 1-53,56-58,63-90,99-111,113-148,157-181,184-185,187,189-198,200,202-226,230-243,258,260-262,264-267,269-271,273-275,279-281,287-290,294-296,298-347,349-362,364-377,379-418
+  s_356e13c19e5fd1::t_126bab084f84fa 348,363,378
+  s_356e13c19e5fd1::t_ff6c78d4e13484 182-183,186,188,199,201
+  s_356e13c19e5fd1::t_3acf89366f77ba 244
+  s_356e13c19e5fd1::t_2cc7d9bcb361e1 149-156
+node/options.go
+  s_e9ca656cd95e0b::t_78cdf3809b7d53 51-54,57
+  s_e9ca656cd95e0b::t_98cceb454ba3fc 65-71
+  s_d181210963dea7::t_40f8a85d15f69f 55
+  s_e9ca656cd95e0b::t_d5e97894bc3b45 35-39
+  s_d181210963dea7::t_0fb1ff96934fa4 56
+go.mod
+  s_356e13c19e5fd1::t_c7a135eed30e26 9
+node/timeout.go
+  s_e9ca656cd95e0b::t_afd07a4f116b9b 337
+  s_e9ca656cd95e0b::t_c1761a081936a2 29-37
+  s_99604d38b18d22::t_7015b0e09f14ad 277
+  s_99604d38b18d22::t_691e39559e55d3 125
+  s_e9ca656cd95e0b::t_77b2a351ec5c19 197-202,221-242,244
+  s_99604d38b18d22::t_4215a67b532f2d 243
+  s_99604d38b18d22::t_95f7b62292c448 145
+  s_99604d38b18d22::t_f048b67df92c8f 156-170
+  s_e9ca656cd95e0b::t_e263992a5761b3 248,250-251,253-255,257-263
+  s_e9ca656cd95e0b::t_b100b83dfae3ec 249,252,256
+  s_e9ca656cd95e0b::t_6d208b7253224f 274-276,278-280,284,290-297
+  s_99604d38b18d22::t_abe2ee7eb8d104 20-25
+.gitignore
+  s_356e13c19e5fd1::t_2ce46f10cd7981 1-2
+cmd/node/main.go
+  s_e9ca656cd95e0b::t_d26c85c95de380 22-26
+  s_e9ca656cd95e0b::t_03dab4a92a8a56 44,49
+  s_d181210963dea7::t_80635684387eb3 31
+  s_356e13c19e5fd1::t_3838e713e47c2c 32-34
+  s_e9ca656cd95e0b::t_c8b2e111b1a04f 27
+  s_356e13c19e5fd1::t_73317ab8c75a59 95-109,112-121,123-129,132-133,136-137,139-140
+  s_356e13c19e5fd1::t_a75c1509612216 110-111,122
+  s_356e13c19e5fd1::t_8e418f793c302d 138
+  s_e9ca656cd95e0b::t_11792adffb624d 54
+README.md
+  s_e9ca656cd95e0b::t_d2326e65861c7e 29
+  h_c2303171a42e2d 136,214
+  s_e9ca656cd95e0b::t_916f399d93a151 122-135,137-151,153-159,162-195,197,199-200
+  s_d181210963dea7::t_b6cbc0340c82fa 160-161
+  s_e9ca656cd95e0b::t_e1e33f9dc5b4c3 30
+  s_d181210963dea7::t_d486c628bac4c2 152
+  s_d181210963dea7::t_875011dd37cc74 196,198
+  s_356e13c19e5fd1::t_60f9485e8e4552 201-213,215-240,245-246
+  s_d181210963dea7::t_cf7c6353559b5e 250
+node/protocol.go
+  s_99604d38b18d22::t_097fd0d99ebf50 379
+  s_e9ca656cd95e0b::t_74b5a79aa6c719 4
+  s_d181210963dea7::t_5f533c54afd384 429-445
+  s_d181210963dea7::t_27b2286b958cb7 366-370
+  s_d181210963dea7::t_80fa407a4e1326 446-450,456-457,463-476,486-512
+  s_e9ca656cd95e0b::t_44df26d6d3950d 421-422,424,426-428,455,458-460,462,478-479
+  s_99604d38b18d22::t_eefa69d797608f 461
+  s_99604d38b18d22::t_b0c46a828ec8d6 185
+  s_e9ca656cd95e0b::t_34363d5dd730ee 539-542,548
+  s_e9ca656cd95e0b::t_2ca4596733ce6a 134,148-150,153,166-168,171,190-210,266-342
+  s_e9ca656cd95e0b::t_3159938fcdfe7d 365,371-373,380
+  s_99604d38b18d22::t_c9d9263b926532 179-184,186-189
+  s_e9ca656cd95e0b::t_f1a472340f3589 33,35-36,43,50,52-53,60
+  s_99604d38b18d22::t_38e9e50b20d515 59
+  s_d181210963dea7::t_f5769db22963f5 211-265
+  s_e9ca656cd95e0b::t_a72b2feb08ba52 517,530-538,543-547,549-552
+  s_99604d38b18d22::t_21735df62516a9 42
+  s_e9ca656cd95e0b::t_33464452832d21 34,51
+  s_e9ca656cd95e0b::t_02d53a098a8ef7 425
+node/node.go
+  s_e9ca656cd95e0b::t_34293e326cb043 127-128
+  s_e9ca656cd95e0b::t_117f80f8fb8522 139,141
+  s_e9ca656cd95e0b::t_1c1d33c49aa5b4 65
+  s_e9ca656cd95e0b::t_3d661e00e216ea 269-273
+  s_d181210963dea7::t_6721d037e2e07c 88
+  s_e9ca656cd95e0b::t_a70a4491ebba6c 89-92
+  s_e9ca656cd95e0b::t_fb137a425f38f0 70-84
+  s_e9ca656cd95e0b::t_f106819904b7de 54
+  s_e9ca656cd95e0b::t_061620690f5037 37
+  s_e9ca656cd95e0b::t_4f791feb839d7a 23-25
+  s_e9ca656cd95e0b::t_41d1f53b77e561 229,233
+  s_e9ca656cd95e0b::t_4a8e7593cc1a9d 140
+  s_e9ca656cd95e0b::t_bb325cdcf80ad3 354-359
+  s_e9ca656cd95e0b::t_90fde0f5f06871 116
+node/attacker.go
+  s_d181210963dea7::t_295c859718da6e 177-178
+  s_d181210963dea7::t_b1d1de45626f48 183-184,189
+  s_e9ca656cd95e0b::t_f238e4088b2c51 1-5,7-25,30-32,41-57,60-61,65-105,110-111,116,129-132,134-140,146,149-158,160-176,179-182,185-188,190-199
+  s_d181210963dea7::t_e6a3bfc930df68 26-29,37-40
+  s_d181210963dea7::t_40f939273ba6c2 33-36
+  s_d181210963dea7::t_a6c66ae81c8fe1 6
+  s_d181210963dea7::t_2a24babb843536 58-59,63-64
+  s_d181210963dea7::t_d956aed7916608 62
+  s_d181210963dea7::t_8c0e9141acfa81 159
+  s_d181210963dea7::t_41488629b163e7 106-109,112-115
+  h_c2303171a42e2d 133
+  s_d181210963dea7::t_3109e4b147daff 117-128
+  s_d181210963dea7::t_eefd3dac904a54 141-145,147-148
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "b2bbab0717603deede8389c0b307fef7d8676d7d",
+  "prompts": {},
+  "humans": {
+    "h_c2303171a42e2d": {
+      "author": "Alan Yacar <alanroyyacar@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_356e13c19e5fd1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f84c83cd-ad8c-4bb0-88ee-eb08bdaf0301",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Alan Yacar <alanroyyacar@gmail.com>"
+    },
+    "s_99604d38b18d22": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2ffda2ec-e7fb-4b3e-9171-8aeed10a8cbc",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Alan Yacar <alanroyyacar@gmail.com>"
+    },
+    "s_d181210963dea7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cbf5dd51-fa0a-4a0b-8984-01ac4ad621f3",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Alan Yacar <alanroyyacar@gmail.com>"
+    },
+    "s_e9ca656cd95e0b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0b13bcd3-4c54-4505-b6bf-ef9746a0d15d",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Alan Yacar <alanroyyacar@gmail.com>"
+    }
+  }
+}
