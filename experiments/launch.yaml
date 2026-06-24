@@ -1,23 +1,42 @@
 # Configuración de ejemplo para el launcher de experimentos.
-# Uso: go run ./cmd/launcher --config experiments/example.yaml
+# Uso: go run ./cmd/launcher --config experiments/launch.yaml
 
 # Parámetros de protocolo compartidos por TODOS los nodos.
 protocol:
-  vdf_t: 1000           # iteraciones (T) de la VDF de Wesolowski
+  vdf_t: 500           # iteraciones (T) de la VDF de Wesolowski
   timeout_ready: 2s     # espera de READY_ACK
   timeout_commit: 1s    # fase commit2
   timeout_reveal1: 1s   # fase reveal1
   timeout_reveal2: 1s   # por nodo en reveal2
 
-discovery_delay: 5s     # ventana para que los nodos se descubran por local-discovery
-max_runtime: 60s        # timeout global de la corrida (apaga todo lo que ocurra primero)
+discovery_delay: 10s    # ventana para que los nodos se descubran por local-discovery
+max_runtime: 120s       # timeout global de la corrida (apaga todo lo que ocurra primero)
 
 # Composición de la red.
+#
+# Capacidad de cómputo (opcional): simula hardware heterogéneo en la etapa VDF.
+# Se expresa en "squarings por segundo"; la duración observada de la VDF de cada
+# nodo es T / capacity segundos. Mayor capacity = hardware más rápido = output antes.
+# Formas admitidas en el campo `capacity`:
+#   - omitido      -> sin simulación (velocidad real de la máquina)
+#   - un escalar   -> mismo valor para todos los nodos del grupo
+#   - una lista    -> un valor por nodo (debe tener largo == count)
+#
+# TECHO: no se puede simular un nodo MÁS RÁPIDO que el hardware real. Si T/capacity es
+# menor que lo que la máquina tarda realmente en computar la VDF, el nodo emite
+# "[vdf] advertencia: capacidad simulada no alcanzable" y corre a velocidad real (sin
+# estirarse). En la práctica capacity debe estar por debajo del throughput real de la
+# máquina (squarings/seg). Con vdf_t=500 y varios nodos en paralelo el cómputo real ronda
+# ~1s, así que conviene usar capacities chicas (decenas/centenas) para que la simulación
+# realmente se aplique.
 nodes:
-  honest: 4
+  honest:
+    count: 4
+    capacity: [50, 100, 100, 150]   # lento, medio, medio, rápido
   attackers:
     - profile: last-revealer-vdf
       count: 1
+      capacity: 200                  # hardware superior: ventaja temporal del adversario
     # Perfiles disponibles: no-ready-ack, commit-invalid, no-commit, equivocate-commit,
     # no-reveal1, reveal1-invalid, last-revealer-abort, last-revealer-abort-r2,
     # no-reveal2, reveal2-invalid, last-revealer-vdf, false-timeout-vote

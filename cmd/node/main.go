@@ -20,6 +20,7 @@ func main() {
 	portFlag := flag.Int("port", 0, "Puerto TCP a escuchar (0 = asignado automáticamente)")
 	peersFlag := flag.String("peer", "", "Multiaddrs de bootstrap separados por comas")
 	vdfTFlag := flag.Int("vdf-t", 1000, "Número de iteraciones (T) para la VDF de Wesolowski")
+	vdfCapacityFlag := flag.Float64("vdf-capacity", 0, "Capacidad simulada en squarings/seg para la VDF (0 = sin límite, velocidad real)")
 	timeoutFlag := flag.Duration("timeout", 0, "Timeout para todas las fases (ej: 500ms, 2s); si >0 sobreescribe los flags individuales")
 	timeoutReadyFlag := flag.Duration("timeout-ready", 2*time.Second, "Timeout esperando READY_ACK de todos los peers")
 	timeoutCommitFlag := flag.Duration("timeout-commit", time.Second, "Timeout fase commit2")
@@ -34,6 +35,7 @@ func main() {
 	cfg := node.DefaultConfig()
 	cfg.Port = *portFlag
 	cfg.VDFT = *vdfTFlag
+	cfg.VDFCapacity = *vdfCapacityFlag
 	if *peersFlag != "" {
 		cfg.BootstrapPeers = strings.Split(*peersFlag, ",")
 	}

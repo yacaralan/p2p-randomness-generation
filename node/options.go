@@ -32,6 +32,12 @@ type Config struct {
 	// 100000+ (experimentos con delays medibles).
 	VDFT int
 
+	// VDFCapacity simula la capacidad de cómputo del nodo en squarings por segundo.
+	// La duración observada de la VDF se estira a T/VDFCapacity segundos: el nodo
+	// computa el resultado real (rápido) pero no lo libera hasta que pase ese tiempo,
+	// modelando hardware más lento o más rápido. 0 = sin simulación (velocidad real).
+	VDFCapacity float64
+
 	// TimeoutReadyAck es el tiempo máximo que el proponente espera READY_ACK de todos los peers.
 	// Al vencer, bloquea la sesión con los peers que respondieron hasta ese momento.
 	// 0 = sin timeout (espera indefinida).

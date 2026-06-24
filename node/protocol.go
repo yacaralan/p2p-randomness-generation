@@ -698,6 +698,24 @@ func (n *Node) runVDF(ctx context.Context, input []byte, iterations int) {
 	if err != nil {
 		return
 	}
+	// Simulación de capacidad de cómputo: si VDFCapacity > 0, estiramos la duración
+	// observada de la VDF a T/VDFCapacity segundos, durmiendo el tiempo restante.
+	// El output recién se libera (vdfResult) tras este sleep, de modo que el nodo no
+	// puede usar el resultado antes del tiempo simulado: así se modela hardware más
+	// lento o más rápido y la ventaja temporal del adversario.
+	if n.config.VDFCapacity > 0 {
+		target := time.Duration(float64(iterations) / n.config.VDFCapacity * float64(time.Second))
+		if remaining := target - time.Since(start); remaining > 0 {
+			select {
+			case <-time.After(remaining):
+			case <-ctx.Done():
+				return
+			}
+		} else {
+			fmt.Printf("[vdf] advertencia: capacidad simulada no alcanzable (cómputo real %v > objetivo %v)\n",
+				time.Since(start), target)
+		}
+	}
 	n.vdfMu.Lock()
 	n.vdfResult = output
 	n.vdfProof = proof

@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -35,12 +36,70 @@ type Config struct {
 	DiscoveryDelay time.Duration `yaml:"discovery_delay"`
 	MaxRuntime     time.Duration `yaml:"max_runtime"`
 	Nodes          struct {
-		Honest    int `yaml:"honest"`
+		Honest    honestSpec `yaml:"honest"`
 		Attackers []struct {
-			Profile string `yaml:"profile"`
-			Count   int    `yaml:"count"`
+			Profile  string       `yaml:"profile"`
+			Count    int          `yaml:"count"`
+			Capacity capacitySpec `yaml:"capacity"`
 		} `yaml:"attackers"`
 	} `yaml:"nodes"`
+}
+
+// honestSpec acepta dos formas en el YAML para el bloque "honest":
+//   - un entero (honest: 4) → solo la cantidad, sin capacidades simuladas.
+//   - un mapping (honest: {count: 4, capacity: [...]}) → cantidad + capacidades.
+type honestSpec struct {
+	Count    int          `yaml:"count"`
+	Capacity capacitySpec `yaml:"capacity"`
+}
+
+func (h *honestSpec) UnmarshalYAML(value *yaml.Node) error {
+	// Forma escalar: honest: 4
+	if value.Kind == yaml.ScalarNode {
+		return value.Decode(&h.Count)
+	}
+	// Forma mapping: honest: {count, capacity}. Usamos un alias para evitar recursión.
+	type raw honestSpec
+	return value.Decode((*raw)(h))
+}
+
+// capacitySpec acepta un escalar (mismo valor para todos los nodos del grupo) o una
+// lista (un valor por nodo). Representa la capacidad de cómputo en squarings/seg.
+type capacitySpec struct {
+	values []float64
+}
+
+func (c *capacitySpec) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.SequenceNode {
+		return value.Decode(&c.values)
+	}
+	var v float64
+	if err := value.Decode(&v); err != nil {
+		return err
+	}
+	c.values = []float64{v}
+	return nil
+}
+
+// resolve devuelve la capacidad de cada uno de los `count` nodos del grupo:
+//   - sin valores → todos 0 (sin simulación).
+//   - un solo valor → se replica a los `count` nodos.
+//   - una lista → debe tener largo `count` exacto.
+func (c capacitySpec) resolve(count int) ([]float64, error) {
+	switch {
+	case len(c.values) == 0:
+		return make([]float64, count), nil
+	case len(c.values) == 1:
+		out := make([]float64, count)
+		for i := range out {
+			out[i] = c.values[0]
+		}
+		return out, nil
+	case len(c.values) == count:
+		return c.values, nil
+	default:
+		return nil, fmt.Errorf("capacity tiene %d valores pero el grupo tiene %d nodos", len(c.values), count)
+	}
 }
 
 // nodeSpec describe un nodo a levantar.
@@ -49,17 +108,24 @@ type nodeSpec struct {
 	profile  string
 	honest   bool
 	proposer bool
+	capacity float64 // capacidad simulada en squarings/seg; 0 = sin simulación
 }
 
 // runningNode agrupa un proceso lanzado con su spec, su archivo de transcript y el
 // output capturado de la VDF.
 type runningNode struct {
-	spec      nodeSpec
-	cmd       *exec.Cmd
-	logFile   *os.File       // archivo de transcript del nodo
-	streams   sync.WaitGroup // goroutines de captura (stdout + stderr)
-	vdfOutput string         // hex del "[vdf] output=" si lo emitió
-	mu        sync.Mutex     // serializa escrituras al logFile y el seteo de vdfOutput
+	spec         nodeSpec
+	cmd          *exec.Cmd
+	logFile      *os.File       // archivo de transcript del nodo
+	streams      sync.WaitGroup // goroutines de captura (stdout + stderr)
+	vdfOutput    string         // hex del "[vdf] output=" si lo emitió
+	vdfInput     string         // hex del "input=" de "[vdf] iniciando cómputo"
+	vdfProof     string         // hex del "[vdf] proof="
+	vdfTimestamp string         // hora .log en que se capturó "[vdf] output="
+	vdfEpochMs   int64          // epoch ms propio del nodo ("[vdf] output obtenido: <ms> ms")
+	peerID       string         // de "[node] PeerID: <id>"
+	participated bool           // true si el nodo emitió "[dcr] commit2 broadcasteado"
+	mu           sync.Mutex     // serializa escrituras al logFile y los campos capturados
 }
 
 func main() {
@@ -106,10 +172,12 @@ func main() {
 
 	fmt.Printf("[launcher] levantando %d nodos (%d honestos)\n", len(specs), countHonest(specs))
 
+	ac := newAbortCollector()
+
 	start := time.Now()
 	nodes := make([]*runningNode, 0, len(specs))
 	for _, spec := range specs {
-		rn, err := spawnNode(binPath, spec, cfg, expDir)
+		rn, err := spawnNode(binPath, spec, cfg, expDir, ac)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error lanzando %s: %v\n", spec.label, err)
 			continue
@@ -153,7 +221,9 @@ func main() {
 		rn.logFile.Close()
 	}
 
-	printSummary(nodes, time.Since(start), expDir)
+	elapsed := time.Since(start)
+	printSummary(nodes, elapsed, expDir)
+	writeResults(nodes, ac, cfg, expDir, elapsed)
 }
 
 // loadConfig lee y parsea el YAML.
@@ -175,32 +245,43 @@ func loadConfig(path string) (Config, error) {
 // buildSpecs expande la composición de la red en una lista de nodos concretos.
 // El proponente es el primer nodo honesto.
 func buildSpecs(cfg Config) ([]nodeSpec, error) {
-	if cfg.Nodes.Honest < 1 {
+	if cfg.Nodes.Honest.Count < 1 {
 		return nil, fmt.Errorf("se requiere al menos 1 nodo honesto (el proponente)")
+	}
+
+	honestCaps, err := cfg.Nodes.Honest.Capacity.resolve(cfg.Nodes.Honest.Count)
+	if err != nil {
+		return nil, fmt.Errorf("honest: %w", err)
 	}
 
 	// Numeración por perfil: honest_1, honest_2, …, last-revealer-vdf_1, …
 	count := make(map[string]int)
 	specs := make([]nodeSpec, 0)
-	for i := 0; i < cfg.Nodes.Honest; i++ {
+	for i := 0; i < cfg.Nodes.Honest.Count; i++ {
 		count["honest"]++
 		specs = append(specs, nodeSpec{
 			label:    fmt.Sprintf("honest_%d", count["honest"]),
 			profile:  "honest",
 			honest:   true,
 			proposer: i == 0, // el primer honesto propone el inicio
+			capacity: honestCaps[i],
 		})
 	}
 	for _, a := range cfg.Nodes.Attackers {
 		if a.Profile == "" || a.Profile == "honest" {
 			return nil, fmt.Errorf("entrada de atacante con perfil inválido: %q", a.Profile)
 		}
+		attackerCaps, err := a.Capacity.resolve(a.Count)
+		if err != nil {
+			return nil, fmt.Errorf("atacante %q: %w", a.Profile, err)
+		}
 		for i := 0; i < a.Count; i++ {
 			count[a.Profile]++
 			specs = append(specs, nodeSpec{
-				label:   fmt.Sprintf("%s_%d", a.Profile, count[a.Profile]),
-				profile: a.Profile,
-				honest:  false,
+				label:    fmt.Sprintf("%s_%d", a.Profile, count[a.Profile]),
+				profile:  a.Profile,
+				honest:   false,
+				capacity: attackerCaps[i],
 			})
 		}
 	}
@@ -226,7 +307,7 @@ func buildNodeBinary() (string, func(), error) {
 
 // spawnNode lanza un subproceso del nodo con los flags correspondientes a su spec
 // y vuelca su transcript a <expDir>/<label>.txt.
-func spawnNode(binPath string, spec nodeSpec, cfg Config, expDir string) (*runningNode, error) {
+func spawnNode(binPath string, spec nodeSpec, cfg Config, expDir string, ac *abortCollector) (*runningNode, error) {
 	args := []string{
 		"--port", "0",
 		"--vdf-t", fmt.Sprintf("%d", cfg.Protocol.VDFT),
@@ -236,6 +317,9 @@ func spawnNode(binPath string, spec nodeSpec, cfg Config, expDir string) (*runni
 		"--timeout-reveal2", cfg.Protocol.TimeoutReveal2.String(),
 		"--attacker", spec.profile,
 		"--exit-on-vdf",
+	}
+	if spec.capacity > 0 {
+		args = append(args, "--vdf-capacity", strconv.FormatFloat(spec.capacity, 'g', -1, 64))
 	}
 	if spec.proposer {
 		args = append(args, "--auto-start", "--auto-start-delay", cfg.DiscoveryDelay.String())
@@ -274,15 +358,15 @@ func spawnNode(binPath string, spec nodeSpec, cfg Config, expDir string) (*runni
 	}
 
 	rn.streams.Add(2)
-	go streamOutput(rn, stdout)
-	go streamOutput(rn, stderr)
+	go streamOutput(rn, stdout, ac)
+	go streamOutput(rn, stderr, ac)
 	return rn, nil
 }
 
 // streamOutput escribe la salida del subproceso al transcript del nodo, prefijando cada
-// línea con un timestamp de reloj de máxima precisión, y captura el output de la VDF para
-// el chequeo de consistencia final.
-func streamOutput(rn *runningNode, r io.Reader) {
+// línea con un timestamp de reloj de máxima precisión, y captura el output de la VDF,
+// el PeerID y los eventos de aborto para el resumen final.
+func streamOutput(rn *runningNode, r io.Reader, ac *abortCollector) {
 	defer rn.streams.Done()
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
@@ -293,8 +377,27 @@ func streamOutput(rn *runningNode, r io.Reader) {
 		fmt.Fprintf(rn.logFile, "%s %s\n", ts, line)
 		if hex, ok := parseVDFOutput(line); ok {
 			rn.vdfOutput = hex
+			rn.vdfTimestamp = ts
+		}
+		if in, ok := parseVDFInput(line); ok {
+			rn.vdfInput = in
+		}
+		if pf, ok := parseVDFProof(line); ok {
+			rn.vdfProof = pf
+		}
+		if ms, ok := parseVDFEpochMs(line); ok && rn.vdfEpochMs == 0 {
+			rn.vdfEpochMs = ms
+		}
+		if pid, ok := parsePeerID(line); ok && rn.peerID == "" {
+			rn.peerID = pid
+		}
+		if !rn.participated && strings.Contains(line, "[dcr] commit2 broadcasteado") {
+			rn.participated = true
 		}
 		rn.mu.Unlock()
+		if short, phase, reason, ok := parseAbort(line); ok {
+			ac.record(short, phase, reason)
+		}
 	}
 }
 
