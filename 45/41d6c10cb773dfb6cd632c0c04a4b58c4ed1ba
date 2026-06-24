@@ -1,0 +1,79 @@
+node/protocol.go
+  s_eeab08d640e20f::t_c2167cd66c7954 701-718
+cmd/launcher/main.go
+  s_2126ea7fb623e7::t_cf168c4e9c0300 310
+  s_eeab08d640e20f::t_738c4bc11da36a 321-323
+  s_eeab08d640e20f::t_a75338f9a1cdda 15
+  s_eeab08d640e20f::t_e772edc8966334 39,41-43,48-102
+  s_eeab08d640e20f::t_e3899c0641b131 248,252-256,260,267,274-277,281-284
+  s_2126ea7fb623e7::t_c86d67d0fb6176 361-362,367-369,380,388-393,400
+  s_eeab08d640e20f::t_02482208195322 111
+  s_eeab08d640e20f::t_39dd41225587bf 127
+  s_eeab08d640e20f::t_ecc51ef2918197 122-123
+  s_2126ea7fb623e7::t_b558b12ddf1a39 117-121,124-126,128
+  s_2126ea7fb623e7::t_4dc611ea2ebdc6 175-176,180
+  s_2126ea7fb623e7::t_1a0d008e542a24 224-226
+  s_eeab08d640e20f::t_01631b63a94593 382-387
+  s_eeab08d640e20f::t_8d17e4dbb417ef 394-395,398-399
+cmd/launcher/results.go
+  s_eeab08d640e20f::t_d8c01c1a156e4a 351-353,355-356,359,362-369,384-385,387
+  s_eeab08d640e20f::t_e4171317023d8a 336
+  s_eeab08d640e20f::t_7209a4dc454f18 60,66,71,73
+  s_eeab08d640e20f::t_b6988d6784efe2 187-194,207-208,213-214,219-220,229-245,257-259
+  s_eeab08d640e20f::t_90e2f84b236454 315-318
+  s_2126ea7fb623e7::t_d9c688d4de3485 1-4,6-14,17-21,27,30-32,34-35,37-39,41-43,45-46,49-59,61-65,67-70,72,74-113,134-186,195-205,210-212,215-218,221-222,224-225,227-228,246-252,255-256,260-263,265-310,409-418,421-436,438-442,445-461,475,488-495
+  s_eeab08d640e20f::t_6573b3d759e719 311-313,321-323,327-335,337-350,354,360,370-371,373-381,383,386,388-391,394-401,403-407
+  s_eeab08d640e20f::t_7dbb04a1d59986 22-26,28-29,33,36,40,44,47-48
+  s_eeab08d640e20f::t_612adc0c983798 5,15-16
+  s_eeab08d640e20f::t_32bf32a8144c4f 114-133
+  s_eeab08d640e20f::t_45e5cc54f2eb31 253,264
+  s_eeab08d640e20f::t_d9c47161098793 254
+  s_eeab08d640e20f::t_6dcecb43fb2645 206,209
+  s_eeab08d640e20f::t_222be5e9696099 314,319-320,324-326,357-358,361,372,382,392-393,402,408,419,443
+  s_eeab08d640e20f::t_f31f9bf6ee7b5e 420,444
+  s_eeab08d640e20f::t_11fb35e01f731b 462-474,476-487
+  s_eeab08d640e20f::t_f213f720088658 223,226
+  s_eeab08d640e20f::t_987f6d6883dfe2 437
+node/options.go
+  s_eeab08d640e20f::t_762e97dd20d717 35-40
+experiments/launch.yaml
+  s_eeab08d640e20f::t_7e5880e39802ac 2,16-23,33-34
+  s_eeab08d640e20f::t_a9a9a7b1722d6c 24-31
+  h_c2303171a42e2d 6
+  s_eeab08d640e20f::t_3c8a0c754b11ba 12-13
+  s_eeab08d640e20f::t_2d94716eed3d3c 35,39
+cmd/node/main.go
+  s_eeab08d640e20f::t_4b8ccd273fea11 23
+  s_eeab08d640e20f::t_4fb27696adeeae 38
+experiments/throttling-hardware-real.md
+  s_eeab08d640e20f::t_21b52c358010fc 1-59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "4541d6c10cb773dfb6cd632c0c04a4b58c4ed1ba",
+  "prompts": {},
+  "humans": {
+    "h_c2303171a42e2d": {
+      "author": "Alan Yacar <alanroyyacar@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_2126ea7fb623e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c5caac78-f709-4663-9350-8cf9222da4da",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Alan Yacar <alanroyyacar@gmail.com>"
+    },
+    "s_eeab08d640e20f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "83145dd8-de52-49f6-86ff-69f954720115",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Alan Yacar <alanroyyacar@gmail.com>"
+    }
+  }
+}
