@@ -1,0 +1,67 @@
+experiments/vdf-timeout-calibration.md
+  s_9fd173b82cd3bb::t_740e7b69a2dd27 88
+  s_9fd173b82cd3bb::t_207942cc1e7995 1-87,89-103,105-109
+  s_9fd173b82cd3bb::t_3e0f2b666d708a 104
+node/protocol.go
+  s_9fd173b82cd3bb::t_ba8191ee2d81c3 724,726,730-739
+  s_9fd173b82cd3bb::t_b1553f00d131c6 458
+cmd/launcher/sweep.go
+  s_9fd173b82cd3bb::t_94844218d944a8 177
+  s_9fd173b82cd3bb::t_30ffec617a64b0 12
+  s_9fd173b82cd3bb::t_b9fcbf7300f6f8 339-340
+  s_9fd173b82cd3bb::t_655b93d054999d 203
+  s_9fd173b82cd3bb::t_1e4ae4658ba4b0 1-11,13-176,178-198,200-202,204-269,278-317,319-323,325-326,329-338,341-345
+  s_9fd173b82cd3bb::t_68c6d043c8926f 270-277
+  s_9fd173b82cd3bb::t_2782f1d455ef2e 199
+  s_9fd173b82cd3bb::t_3eb824009cbd18 327-328
+  s_9fd173b82cd3bb::t_2303ee5acfecc0 318,324
+node/node.go
+  s_9fd173b82cd3bb::t_dee90db403478a 254
+  s_9fd173b82cd3bb::t_3d46775a408562 43-47
+experiments/launch.yaml
+  h_c2303171a42e2d 12,35
+cmd/launcher/results.go
+  s_eeab08d640e20f::t_118c808584aa95 207,209
+  s_eeab08d640e20f::t_6fd775d8319f99 263-265
+  h_c2303171a42e2d 353
+experiments/sweep.yaml
+  s_9fd173b82cd3bb::t_2a5ec11224d8e7 1-8,11-24
+experiments/sweep_runs/plot_min_t.py
+  s_9fd173b82cd3bb::t_3310e824796234 1-49
+cmd/launcher/main.go
+  s_9fd173b82cd3bb::t_79e06ab8347c85 449-474
+  s_9fd173b82cd3bb::t_f3a85982505d69 140,143-150,152,188-202,213,224-225,227-229,231-251,254-255
+  s_9fd173b82cd3bb::t_a98ce580348ee0 426-431
+  s_9fd173b82cd3bb::t_a918c8ec93fe4c 128-135
+  s_9fd173b82cd3bb::t_630acf14903c40 187
+  s_9fd173b82cd3bb::t_7387f4be27b97f 230,252-253
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "dc51bb5f3ad971fcb5977f384a003f1ce5d5300b",
+  "prompts": {},
+  "humans": {
+    "h_c2303171a42e2d": {
+      "author": "Alan Yacar <alanroyyacar@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_9fd173b82cd3bb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "80873baa-660b-4cfc-8f09-c45f86fd6ef6",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Alan Yacar <alanroyyacar@gmail.com>"
+    },
+    "s_eeab08d640e20f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "83145dd8-de52-49f6-86ff-69f954720115",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Alan Yacar <alanroyyacar@gmail.com>"
+    }
+  }
+}
