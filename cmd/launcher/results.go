@@ -204,9 +204,9 @@ func writeResults(nodes []*runningNode, ac *abortCollector, cfg Config, expDir s
 	w := csv.NewWriter(csvFile)
 	_ = w.Write([]string{
 		"run_id", "label", "profile", "proposer", "participated", "vdf_capacity",
-		"peer_id", "vdf_output", "vdf_input", "vdf_proof", "vdf_valid",
-		"vdf_timestamp", "vdf_epoch_ms",
+		"peer_id", "vdf_valid", "vdf_timestamp", "vdf_epoch_ms",
 		"aborted", "abort_phase", "abort_reason", "protocol_success",
+		"vdf_output", "vdf_input", "vdf_proof",
 	})
 
 	abortedCount := 0
@@ -253,9 +253,6 @@ func writeResults(nodes []*runningNode, ac *abortCollector, cfg Config, expDir s
 			strconv.FormatBool(participated),
 			strconv.FormatFloat(rn.spec.capacity, 'g', -1, 64),
 			peerID,
-			vdfOut,
-			vdfIn,
-			vdfProof,
 			strconv.FormatBool(vdfValid),
 			vdfTS,
 			epochMsStr(vdfEpoch),
@@ -263,6 +260,9 @@ func writeResults(nodes []*runningNode, ac *abortCollector, cfg Config, expDir s
 			abortPhase,
 			abortReason,
 			strconv.FormatBool(protocolSuccess),
+			vdfOut,
+			vdfIn,
+			vdfProof,
 		})
 	}
 	w.Flush()
@@ -350,7 +350,7 @@ func writeResults(nodes []*runningNode, ac *abortCollector, cfg Config, expDir s
 	// --- Invariantes del protocolo ---
 	// honest_agreement: los honestos que participaron en el protocolo y completaron
 	// la VDF coinciden en el output. Se usa `participated` (emitieron commit2) en lugar
-	// del conteo de lanzados, para no penalizar a nodos que llegaron tarde al discovery.
+	// del conteo de lanzados, para considerar los que realmente formaron parte del protocolo.
 	var honestDone []string
 	honestParticipants := 0  // honestos que llegaron a commit2
 	sessionParticipants := 0 // todos los que llegaron a commit2 (honestos + atacantes)

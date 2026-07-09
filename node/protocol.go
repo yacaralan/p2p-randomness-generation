@@ -455,6 +455,7 @@ func (n *Node) publishReveal2(ctx context.Context) error {
 
 	if lastRevealerVDF {
 		n.attackerLogf("último revelador — iniciando VDF con input completo antes de publicar reveal2: %d ms", tsMs())
+		n.expLastRevealer = true
 		n.tryStartVDF(ctx)
 	}
 
@@ -720,9 +721,20 @@ func (n *Node) runVDF(ctx context.Context, input []byte, iterations int) {
 	n.vdfResult = output
 	n.vdfProof = proof
 	n.vdfMu.Unlock()
+	dur := time.Since(start)
 	valid := protocol.VerifyVDF(input, iterations, output, proof)
-	fmt.Printf("[vdf] output obtenido: %d ms (duración: %v)\n", tsMs(), time.Since(start))
+	fmt.Printf("[vdf] output obtenido: %d ms (duración: %v)\n", tsMs(), dur)
 	fmt.Printf("[vdf] output=%x\n", output)
 	fmt.Printf("[vdf] proof=%x\n", proof)
 	fmt.Printf("[vdf] verificación inline: %v\n", valid)
+
+	// Veredicto experimental: si este nodo es el último revelador que disparó la VDF
+	// temprana, reportar si obtuvo el output DENTRO de la ventana de TO (output
+	// anticipado → podría abortar selectivamente). El reveal se publica igual.
+	if n.expLastRevealer {
+		window := n.config.TimeoutReveal2
+		anticipado := dur < window
+		fmt.Printf("[exp] last-revealer output_dur_ms=%d window_ms=%d output_anticipado=%t\n",
+			dur.Milliseconds(), window.Milliseconds(), anticipado)
+	}
 }

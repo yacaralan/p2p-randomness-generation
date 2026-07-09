@@ -1,0 +1,24 @@
+# Calibración del par (TO, T): para cada timeout de reveal2 (TO), busca el T de VDF
+# más chico que impide que el último revelador obtenga el output de la VDF antes de
+# que expire la ventana de TO. Ver experiments/vdf-timeout-calibration.md.
+#
+# Ejecutar:  go run ./cmd/launcher --sweep experiments/sweep.yaml
+sweep:
+  timeouts_reveal2: [200ms, 500ms, 1s, 2s]   # los TO a evaluar
+
+  vdf_t_min: 50          # cota inferior de la búsqueda
+  vdf_t_start: 50000       # T inicial para la expansión de la cota superior
+  vdf_t_max: 5000000      # tope; si se supera sin hallar T seguro → error
+
+  binary_gap: 50          # frenar la binaria cuando (T_seguro - T_anterior) <= 50
+  confirm_runs: 3         # corridas de confirmación en el T candidato
+  confirm_step: 50        # +50 al T si alguna corrida de confirmación falla
+
+  nodes: 4                # todos last-revealer-vdf, sin capacidad simulada (HW real)
+
+  # Timeouts fijos del resto de las fases y orquestación de cada corrida:
+  timeout_ready: 2s
+  timeout_commit: 500ms
+  timeout_reveal1: 500ms
+  discovery_delay: 2s
+  per_run_timeout: 60s    # cota de tiempo por corrida individual

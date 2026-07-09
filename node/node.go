@@ -40,6 +40,11 @@ type Node struct {
 	vdfProof     []byte
 	vdfTriggered bool
 
+	// expLastRevealer marca la corrida en la que este nodo es el verdadero último
+	// revelador y disparó la VDF temprana: solo entonces runVDF emite el veredicto
+	// experimental [exp] comparando la duración de la VDF contra la ventana de TO.
+	expLastRevealer bool
+
 	// estado de la sesión del protocolo
 	sessionMu           sync.Mutex
 	sessionActive       bool
@@ -246,6 +251,7 @@ func (n *Node) Reset() {
 	n.vdfResult = nil
 	n.vdfProof = nil
 	n.vdfTriggered = false
+	n.expLastRevealer = false
 	n.vdfMu.Unlock()
 
 	n.timeoutMu.Lock()

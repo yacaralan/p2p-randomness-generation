@@ -125,15 +125,31 @@ type runningNode struct {
 	vdfEpochMs   int64          // epoch ms propio del nodo ("[vdf] output obtenido: <ms> ms")
 	peerID       string         // de "[node] PeerID: <id>"
 	participated bool           // true si el nodo emitió "[dcr] commit2 broadcasteado"
-	mu           sync.Mutex     // serializa escrituras al logFile y los campos capturados
+
+	// Veredicto experimental del último revelador (línea "[exp] last-revealer ...").
+	expSeen       bool  // true si el nodo emitió la línea de veredicto
+	expDurMs      int64 // duración de la VDF en ms
+	expWindowMs   int64 // ventana de TO en ms
+	expAnticipado bool  // true si obtuvo el output dentro de la ventana de TO
+
+	mu sync.Mutex // serializa escrituras al logFile y los campos capturados
 }
 
 func main() {
 	configFlag := flag.String("config", "", "Ruta al archivo de configuración YAML")
+	sweepFlag := flag.String("sweep", "", "Ruta al archivo de configuración de sweep YAML (calibración TO/T)")
 	flag.Parse()
 
+	if *sweepFlag != "" {
+		if err := runSweep(*sweepFlag); err != nil {
+			fmt.Fprintf(os.Stderr, "error en sweep: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if *configFlag == "" {
-		fmt.Fprintln(os.Stderr, "error: falta --config <path.yaml>")
+		fmt.Fprintln(os.Stderr, "error: falta --config <path.yaml> (o --sweep <sweep.yaml>)")
 		os.Exit(1)
 	}
 
@@ -147,11 +163,6 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error en la config: %v\n", err)
 		os.Exit(1)
-	}
-
-	// Limpiar el rendezvous de local-discovery para que no queden peers de corridas previas.
-	if err := os.RemoveAll(localDir); err != nil {
-		fmt.Fprintf(os.Stderr, "advertencia: no se pudo limpiar %s: %v\n", localDir, err)
 	}
 
 	// Carpeta de este experimento: un .txt por nodo con su transcript completo.
@@ -172,9 +183,23 @@ func main() {
 
 	fmt.Printf("[launcher] levantando %d nodos (%d honestos)\n", len(specs), countHonest(specs))
 
-	ac := newAbortCollector()
-
 	start := time.Now()
+	nodes, ac := runOnce(binPath, specs, cfg, expDir, waitHonestOrTimeout(cfg.MaxRuntime))
+	elapsed := time.Since(start)
+	printSummary(nodes, elapsed, expDir)
+	writeResults(nodes, ac, cfg, expDir, elapsed)
+}
+
+// runOnce levanta una red de nodos para una corrida, espera con la condición `wait`
+// (que decide cuándo termina la corrida) y luego apaga todo y cierra los transcripts.
+// Devuelve los nodos con sus campos ya capturados y el colector de abortos.
+func runOnce(binPath string, specs []nodeSpec, cfg Config, expDir string, wait func([]*runningNode)) ([]*runningNode, *abortCollector) {
+	// Limpiar el rendezvous de local-discovery para que no queden peers de corridas previas.
+	if err := os.RemoveAll(localDir); err != nil {
+		fmt.Fprintf(os.Stderr, "advertencia: no se pudo limpiar %s: %v\n", localDir, err)
+	}
+
+	ac := newAbortCollector()
 	nodes := make([]*runningNode, 0, len(specs))
 	for _, spec := range specs {
 		rn, err := spawnNode(binPath, spec, cfg, expDir, ac)
@@ -185,31 +210,7 @@ func main() {
 		nodes = append(nodes, rn)
 	}
 
-	// Esperar a que terminen los nodos honestos (se auto-apagan al completar la VDF)
-	// o a que venza el timeout global, lo que ocurra primero.
-	honestDone := make(chan struct{})
-	go func() {
-		var wg sync.WaitGroup
-		for _, rn := range nodes {
-			if !rn.spec.honest {
-				continue
-			}
-			wg.Add(1)
-			go func(rn *runningNode) {
-				defer wg.Done()
-				rn.cmd.Wait()
-			}(rn)
-		}
-		wg.Wait()
-		close(honestDone)
-	}()
-
-	select {
-	case <-honestDone:
-		fmt.Println("[launcher] todos los nodos honestos completaron la ejecución")
-	case <-time.After(cfg.MaxRuntime):
-		fmt.Printf("[launcher] timeout global (%v) alcanzado\n", cfg.MaxRuntime)
-	}
+	wait(nodes)
 
 	// Apagar todo lo que siga vivo: SIGTERM, esperar, SIGKILL.
 	shutdown(nodes)
@@ -220,10 +221,38 @@ func main() {
 		rn.streams.Wait()
 		rn.logFile.Close()
 	}
+	return nodes, ac
+}
 
-	elapsed := time.Since(start)
-	printSummary(nodes, elapsed, expDir)
-	writeResults(nodes, ac, cfg, expDir, elapsed)
+// waitHonestOrTimeout devuelve la condición de fin del single-run: espera a que todos
+// los nodos honestos terminen (se auto-apagan al completar la VDF) o a que venza el
+// timeout global, lo que ocurra primero.
+func waitHonestOrTimeout(maxRuntime time.Duration) func([]*runningNode) {
+	return func(nodes []*runningNode) {
+		honestDone := make(chan struct{})
+		go func() {
+			var wg sync.WaitGroup
+			for _, rn := range nodes {
+				if !rn.spec.honest {
+					continue
+				}
+				wg.Add(1)
+				go func(rn *runningNode) {
+					defer wg.Done()
+					rn.cmd.Wait()
+				}(rn)
+			}
+			wg.Wait()
+			close(honestDone)
+		}()
+
+		select {
+		case <-honestDone:
+			fmt.Println("[launcher] todos los nodos honestos completaron la ejecución")
+		case <-time.After(maxRuntime):
+			fmt.Printf("[launcher] timeout global (%v) alcanzado\n", maxRuntime)
+		}
+	}
 }
 
 // loadConfig lee y parsea el YAML.
@@ -394,6 +423,12 @@ func streamOutput(rn *runningNode, r io.Reader, ac *abortCollector) {
 		if !rn.participated && strings.Contains(line, "[dcr] commit2 broadcasteado") {
 			rn.participated = true
 		}
+		if durMs, winMs, anticipado, ok := parseExpVerdict(line); ok && !rn.expSeen {
+			rn.expDurMs = durMs
+			rn.expWindowMs = winMs
+			rn.expAnticipado = anticipado
+			rn.expSeen = true
+		}
 		rn.mu.Unlock()
 		if short, phase, reason, ok := parseAbort(line); ok {
 			ac.record(short, phase, reason)
@@ -409,6 +444,32 @@ func parseVDFOutput(line string) (string, bool) {
 		return "", false
 	}
 	return strings.TrimSpace(line[idx+len(marker):]), true
+}
+
+// parseExpVerdict extrae el veredicto experimental de una línea
+// "[exp] last-revealer output_dur_ms=<d> window_ms=<w> output_anticipado=<bool>".
+func parseExpVerdict(line string) (durMs, winMs int64, anticipado, ok bool) {
+	const marker = "[exp] last-revealer "
+	idx := strings.Index(line, marker)
+	if idx < 0 {
+		return 0, 0, false, false
+	}
+	fields := strings.Fields(line[idx+len(marker):])
+	for _, f := range fields {
+		kv := strings.SplitN(f, "=", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		switch kv[0] {
+		case "output_dur_ms":
+			durMs, _ = strconv.ParseInt(kv[1], 10, 64)
+		case "window_ms":
+			winMs, _ = strconv.ParseInt(kv[1], 10, 64)
+		case "output_anticipado":
+			anticipado = kv[1] == "true"
+		}
+	}
+	return durMs, winMs, anticipado, true
 }
 
 // shutdown envía SIGTERM a los procesos vivos, espera, y mata los que sigan corriendo.

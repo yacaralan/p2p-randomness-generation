@@ -9,7 +9,7 @@ protocol:
   timeout_reveal1: 1s   # fase reveal1
   timeout_reveal2: 1s   # por nodo en reveal2
 
-discovery_delay: 10s    # ventana para que los nodos se descubran por local-discovery
+discovery_delay: 5s    # ventana para que los nodos se descubran por local-discovery
 max_runtime: 120s       # timeout global de la corrida (apaga todo lo que ocurra primero)
 
 # Composición de la red.
@@ -32,7 +32,7 @@ max_runtime: 120s       # timeout global de la corrida (apaga todo lo que ocurra
 nodes:
   honest:
     count: 4
-    capacity: [50, 100, 100, 150]   # lento, medio, medio, rápido
+    #capacity: [50, 100, 150, 190]   # lento, medio, medio, rápido
   attackers:
     - profile: last-revealer-vdf
       count: 1
